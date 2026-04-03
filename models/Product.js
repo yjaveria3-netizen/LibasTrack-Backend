@@ -11,7 +11,11 @@ const productSchema = new mongoose.Schema({
   color: { type: String },
   price: { type: Number, required: true },
   stockQty: { type: Number, default: 0 },
-  imageLink: { type: String },
+  // Image fields
+  imageLink: { type: String },           // Google Drive view URL (stored in Sheets)
+  imageViewUrl: { type: String },        // Full Drive view URL
+  imageThumbnailUrl: { type: String },   // Thumbnail URL for quick display
+  imageDriveFileId: { type: String },    // Drive file ID (for deletion)
   sheetRowIndex: { type: Number },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
