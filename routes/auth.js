@@ -69,6 +69,8 @@ router.get('/me', authMiddleware, async (req, res) => {
       email: req.user.email,
       avatar: req.user.avatar,
       brand: req.user.brand,
+      storageType: req.user.storageType,
+      localPath: req.user.localPath,
       driveConnected: req.user.driveConnected,
       driveName: req.user.driveName,
       driveLink: req.user.driveLink

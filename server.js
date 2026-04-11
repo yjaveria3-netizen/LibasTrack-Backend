@@ -15,6 +15,7 @@ const driveRoutes     = require('./routes/drive');
 const checklistRoutes = require('./routes/checklist');
 const supplierRoutes  = require('./routes/suppliers');
 const returnRoutes    = require('./routes/returns');
+const storageRoutes   = require('./routes/storage');
 
 const app = express();
 
@@ -43,6 +44,7 @@ app.use('/api/drive',     driveRoutes);
 app.use('/api/checklist', checklistRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/returns',   returnRoutes);
+app.use('/api/storage',   storageRoutes);
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 

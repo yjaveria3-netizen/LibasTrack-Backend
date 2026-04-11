@@ -28,6 +28,10 @@ const userSchema = new mongoose.Schema({
     onboardingComplete: { type: Boolean, default: false }
   },
 
+  // Storage preference
+  storageType: { type: String, enum: ['google_drive', 'local_excel', null], default: null },
+  localPath: { type: String, default: '' },   // absolute path to LibasTrack folder on PC
+
   // Google Drive/Sheets
   driveConnected: { type: Boolean, default: false },
   driveName: { type: String },
