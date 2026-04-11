@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
-const counterSchema = new mongoose.Schema({ _id: String, seq: Number });
-const Counter = mongoose.model('Counter4', counterSchema);
+const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
+const Counter = mongoose.model('CounterFin', counterSchema);
 
 const financialSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -9,7 +9,7 @@ const financialSchema = new mongoose.Schema({
   price: { type: Number, required: true },
   paymentMethod: {
     type: String,
-    enum: ['Cash', 'Bank Transfer', 'EasyPaisa', 'JazzCash', 'Card', 'COD'],
+    enum: ['Cash', 'Bank Transfer', 'EasyPaisa', 'JazzCash', 'Card', 'COD', 'Stripe', 'PayPal', 'Wise', 'Other'],
     required: true
   },
   paymentStatus: {
@@ -25,7 +25,7 @@ const financialSchema = new mongoose.Schema({
 financialSchema.pre('save', async function(next) {
   if (this.isNew && !this.transactionId) {
     const counter = await Counter.findByIdAndUpdate(
-      { _id: 'transactionId' },
+      { _id: `transactionId_${this.userId}` },
       { $inc: { seq: 1 } },
       { new: true, upsert: true }
     );

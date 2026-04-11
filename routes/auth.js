@@ -23,26 +23,18 @@ router.get('/google', (req, res) => {
 router.get('/google/callback', async (req, res) => {
   try {
     const { code } = req.query;
-    if (!code) {
-      console.error('❌ No auth code received');
-      return res.redirect(`${process.env.FRONTEND_URL}/login?error=no_code`);
-    }
+    if (!code) return res.redirect(`${process.env.FRONTEND_URL}/login?error=no_code`);
 
-    console.log('🔄 Exchanging code for tokens...');
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
-    
-    console.log('📧 Fetching user info...');
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const userInfo = await oauth2.userinfo.get();
     const { id, email, name, picture } = userInfo.data;
-    console.log(`✅ Got user: ${email}`);
 
     let user = await User.findOne({ googleId: id });
     const isNewUser = !user;
 
     if (!user) {
-      console.log(`💾 Creating new user: ${email}`);
       user = new User({
         googleId: id, email, name, avatar: picture,
         accessToken: tokens.access_token,
@@ -50,7 +42,6 @@ router.get('/google/callback', async (req, res) => {
         tokenExpiry: new Date(tokens.expiry_date)
       });
     } else {
-      console.log(`📝 Updating existing user: ${email}`);
       user.accessToken = tokens.access_token;
       if (tokens.refresh_token) user.refreshToken = tokens.refresh_token;
       user.tokenExpiry = new Date(tokens.expiry_date);
@@ -58,14 +49,13 @@ router.get('/google/callback', async (req, res) => {
       user.avatar = picture;
     }
     await user.save();
-    console.log(`✅ User saved to DB`);
 
     const jwtToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    // needsOnboarding = new user OR brand onboarding not complete
     const needsOnboarding = isNewUser || !user.brand.onboardingComplete;
-    console.log(`🎯 Redirecting to: ${process.env.FRONTEND_URL}/auth/callback?token=${jwtToken.substring(0, 10)}...&needsOnboarding=${needsOnboarding}`);
     res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${jwtToken}&needsOnboarding=${needsOnboarding}`);
   } catch (err) {
-    console.error('❌ OAuth callback error:', err.message, err);
+    console.error('OAuth callback error:', err);
     res.redirect(`${process.env.FRONTEND_URL}/login?error=oauth_failed`);
   }
 });

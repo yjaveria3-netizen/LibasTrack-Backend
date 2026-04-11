@@ -34,6 +34,14 @@ router.get('/', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+router.get('/stats/summary', authMiddleware, async (req, res) => {
+  try {
+    const total = await Customer.countDocuments({ userId: req.user._id });
+    const thisMonth = await Customer.countDocuments({ userId: req.user._id, dateJoined: { $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } });
+    res.json({ success: true, total, thisMonth });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const customer = await Customer.findOne({ _id: req.params.id, userId: req.user._id });

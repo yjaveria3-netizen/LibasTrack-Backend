@@ -32,6 +32,19 @@ router.get('/', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+router.get('/stats/summary', authMiddleware, async (req, res) => {
+  try {
+    const total = await Order.countDocuments({ userId: req.user._id });
+    const pending = await Order.countDocuments({ userId: req.user._id, status: 'Pending' });
+    const delivered = await Order.countDocuments({ userId: req.user._id, status: 'Delivered' });
+    const revenue = await Order.aggregate([
+      { $match: { userId: req.user._id, status: { $ne: 'Cancelled' } } },
+      { $group: { _id: null, total: { $sum: '$total' } } }
+    ]);
+    res.json({ success: true, total, pending, delivered, revenue: revenue[0]?.total || 0 });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const { customerId, productId, quantity, total, status, orderDate } = req.body;
