@@ -24,16 +24,18 @@ if (!fs.existsSync(envPath)) {
     console.log('✓ .env created\n');
   } else {
     console.log('Creating .env template...\n');
-    const template = `# MongoDB
-MONGODB_URI=mongodb+srv://your-user:your-password@cluster.mongodb.net/libastrack
+    const template = `# IMPORTANT: Never commit real credentials to git
+
+# MongoDB
+MONGODB_URI=<your-mongodb-connection-string>
 
 # JWT & Encryption
-JWT_SECRET=your-jwt-secret-key-keep-this-very-secret
+JWT_SECRET=<generate-a-strong-random-secret>
 ENCRYPTION_SECRET=${crypto.randomBytes(32).toString('hex')}
 
 # Google OAuth
-GOOGLE_CLIENT_ID=your-client-id-here.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your-client-secret-here
+GOOGLE_CLIENT_ID=<your-google-client-id>
+GOOGLE_CLIENT_SECRET=<your-google-client-secret>
 GOOGLE_REDIRECT_URI=http://localhost:5000/api/auth/google/callback
 
 # Frontend
