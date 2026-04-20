@@ -5,8 +5,31 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
+const fs = require('fs');
+const path = require('path');
+const logger = require('./middleware/logger');
+const sanitizePayload = require('./middleware/sanitizePayload');
+
+let cookieParser;
+try {
+  cookieParser = require('cookie-parser');
+} catch (err) {
+  console.warn('⚠️  cookie-parser not installed. Installing critical dependencies...');
+  console.warn('    Run: npm install cookie-parser winston');
+  // Simple fallback parser that does nothing
+  cookieParser = () => (req, res, next) => next();
+}
 
 const app = express();
+
+// Prevent conditional 304 responses for API JSON payloads (especially auth state).
+app.set('etag', false);
+
+// Create logs directory if it doesn't exist
+const logsDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
 
 // ── Security & middleware ─────────────────────────────
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
@@ -16,44 +39,57 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+app.use(sanitizePayload);
+app.use(cookieParser());
 app.use(morgan('dev'));
 
-// Rate limiter — more generous limits for dev
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 500,
+// Rate limiters with different strictness levels
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 10,                     // 10 requests per window (stricter for auth)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many authentication attempts, please try again later',
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 200,                    // 200 requests per window (looser for data routes)
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.use('/api/', limiter);
+
+// Apply limiters to specific routes
+app.use('/api/auth/google', authLimiter);
+app.use('/api/auth/google/callback', authLimiter);
+app.use('/api/', apiLimiter);
 
 // ── Diagnostic Logging ────────────────────────────────
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
+  logger.error('Unhandled Rejection at:', { reason, promise });
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('CRITICAL: Uncaught Exception:', err);
+  logger.error('Uncaught Exception:', err);
 });
 
 // ── MongoDB ──────────────────────────────────────────
-console.log('Attempting MongoDB connection...');
+logger.info('Attempting MongoDB connection...');
 mongoose.connect(process.env.MONGODB_URI, {
   serverSelectionTimeoutMS: 5000,
   socketTimeoutMS: 45000,
 })
   .then(() => {
-    console.log('✅ MongoDB connected successfully');
-    console.log('   DB Name:', mongoose.connection.name);
-    console.log('   Connection Host:', mongoose.connection.host);
+    logger.info('✅ MongoDB connected successfully', {
+      dbName: mongoose.connection.name,
+      host: mongoose.connection.host
+    });
   })
   .catch(err => {
-    console.error('❌ MongoDB connection error details:');
-    console.error('   Message:', err.message);
-    console.error('   Code:', err.code);
-    if (err.message.includes('whitelist')) {
-      console.error('   TIP: Your IP address may not be whitelisted in MongoDB Atlas.');
-    }
+    logger.error('❌ MongoDB connection error', {
+      message: err.message,
+      code: err.code
+    });
   });
 
 
@@ -86,7 +122,13 @@ app.use((req, res) => {
 
 // ── Global error handler ─────────────────────────────
 app.use((err, req, res, next) => {
-  console.error('Server error:', err);
+  logger.error('Server error', {
+    message: err.message,
+    stack: err.stack,
+    url: req.url,
+    method: req.method
+  });
+  
   // Multer file size error
   if (err.code === 'LIMIT_FILE_SIZE') {
     return res.status(400).json({ success: false, message: 'File too large. Maximum is 10MB.' });
@@ -97,6 +139,9 @@ app.use((err, req, res, next) => {
 // ── Start ─────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 LibasTrack backend running on port ${PORT}`);
-  console.log(`   Frontend: ${process.env.FRONTEND_URL}`);
+  logger.info(`🚀 LibasTrack backend running`, {
+    port: PORT,
+    frontend: process.env.FRONTEND_URL,
+    env: process.env.NODE_ENV || 'development'
+  });
 });

@@ -14,9 +14,9 @@ const orderItemSchema = new mongoose.Schema({
 }, { _id: false });
 
 const orderSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   orderId: { type: String, unique: true },
-  customerId: { type: String, required: true },
+  customerId: { type: String, required: true, index: true },
   customerName: { type: String },
   customerPhone: { type: String },
 
@@ -36,7 +36,8 @@ const orderSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ['Pending', 'Confirmed', 'Processing', 'Stitching', 'Quality Check', 'Ready', 'Dispatched', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled', 'Returned', 'Refunded'],
-    default: 'Pending'
+    default: 'Pending',
+    index: true
   },
 
   // Shipping
@@ -52,10 +53,14 @@ const orderSchema = new mongoose.Schema({
   notes: { type: String },
   priority: { type: String, enum: ['Normal', 'Urgent', 'VIP'], default: 'Normal' },
 
-  orderDate: { type: Date, default: Date.now },
+  orderDate: { type: Date, default: Date.now, index: true },
   sheetRowIndex: { type: Number },
   createdAt: { type: Date, default: Date.now }
 });
+
+// Compound indexes for filtered queries
+orderSchema.index({ userId: 1, status: 1 });
+orderSchema.index({ userId: 1, orderDate: -1 });
 
 orderSchema.pre('save', async function(next) {
   if (this.isNew && !this.orderId) {

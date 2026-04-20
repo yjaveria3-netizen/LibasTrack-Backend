@@ -4,7 +4,7 @@ const Counter = mongoose.models.CounterBrandCol || mongoose.model('CounterBrandC
 
 // Named 'BrandCollection' to avoid Mongoose reserved 'collection' keyword warning
 const brandCollectionSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   collectionId: { type: String, unique: true },
   name: { type: String, required: true },
   description: { type: String },
@@ -14,7 +14,8 @@ const brandCollectionSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ['Planning', 'Production', 'Ready', 'Launched', 'Archived'],
-    default: 'Planning'
+    default: 'Planning',
+    index: true
   },
   launchDate: { type: Date },
   productCount: { type: Number, default: 0 },
@@ -23,6 +24,9 @@ const brandCollectionSchema = new mongoose.Schema({
   sheetRowIndex: { type: Number },
   createdAt: { type: Date, default: Date.now }
 }, { suppressReservedKeysWarning: true });
+
+// Compound index for filtered queries
+brandCollectionSchema.index({ userId: 1, status: 1 });
 
 brandCollectionSchema.pre('save', async function(next) {
   if (this.isNew && !this.collectionId) {

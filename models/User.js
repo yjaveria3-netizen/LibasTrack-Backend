@@ -1,8 +1,9 @@
 const mongoose = require('mongoose');
+const { encrypt, decrypt } = require('../services/encryption');
 
 const userSchema = new mongoose.Schema({
   googleId: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true, index: true },
   name: { type: String, required: true },
   avatar: { type: String },
 
@@ -48,12 +49,35 @@ const userSchema = new mongoose.Schema({
     returns: { type: String }
   },
 
-  // OAuth
-  accessToken: { type: String },
-  refreshToken: { type: String },
+  // OAuth — tokens encrypted at rest
+  accessToken: { type: String },      // encrypted AES-256
+  refreshToken: { type: String },     // encrypted AES-256
   tokenExpiry: { type: Date },
-  createdAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now, index: true },
   lastLogin: { type: Date, default: Date.now }
+});
+
+// ─────────────────────────────────────────
+// Encryption hooks: auto-encrypt on save, decrypt on retrieval
+// ─────────────────────────────────────────
+
+userSchema.pre('save', function(next) {
+  if (this.isModified('accessToken') && this.accessToken) {
+    this.accessToken = encrypt(this.accessToken);
+  }
+  if (this.isModified('refreshToken') && this.refreshToken) {
+    this.refreshToken = encrypt(this.refreshToken);
+  }
+  next();
+});
+
+// Add virtual getters for decrypted tokens
+userSchema.virtual('decryptedAccessToken').get(function() {
+  return this.accessToken ? decrypt(this.accessToken) : null;
+});
+
+userSchema.virtual('decryptedRefreshToken').get(function() {
+  return this.refreshToken ? decrypt(this.refreshToken) : null;
 });
 
 module.exports = mongoose.models.User || mongoose.model('User', userSchema);

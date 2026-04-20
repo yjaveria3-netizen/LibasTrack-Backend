@@ -91,8 +91,10 @@ const WORKBOOKS = [
  *
  * Folder structure:
  *   <root>/
- *     Spreadsheets/   ← all .xlsx files
- *     Images/         ← product photos
+ *     Database/       ← all .xlsx files
+ *     Images/
+ *       products/     ← product photos
+ *       customers/    ← customer photos
  *     README.txt
  */
 router.post('/setup-local', authMiddleware, async (req, res) => {
@@ -119,13 +121,16 @@ router.post('/setup-local', authMiddleware, async (req, res) => {
     }
 
     // Create sub-folders
-    const spreadsheetsDir = path.join(baseDir, 'Spreadsheets');
+    const spreadsheetsDir = path.join(baseDir, 'Database');
     const imagesDir = path.join(baseDir, 'Images');
+    const productImagesDir = path.join(imagesDir, 'products');
+    const customerImagesDir = path.join(imagesDir, 'customers');
 
     fs.mkdirSync(spreadsheetsDir, { recursive: true });
-    fs.mkdirSync(imagesDir, { recursive: true });
+    fs.mkdirSync(productImagesDir, { recursive: true });
+    fs.mkdirSync(customerImagesDir, { recursive: true });
 
-    // Create workbooks inside Spreadsheets/
+    // Create workbooks inside Database/
     const created = [];
     for (const wb of WORKBOOKS) {
       const filePath = path.join(spreadsheetsDir, wb.filename);
@@ -143,8 +148,10 @@ router.post('/setup-local', authMiddleware, async (req, res) => {
         `LibasTrack — ${brandName}\n` +
         `Created: ${new Date().toLocaleDateString()}\n\n` +
         `Folder structure:\n` +
-        `  Spreadsheets/   All Excel data files\n` +
-        `  Images/         Product photos saved by LibasTrack\n\n` +
+        `  Database/       All Excel data files\n` +
+        `  Images/         Photos saved by LibasTrack\n` +
+        `    products/     Product images\n` +
+        `    customers/    Customer images\n\n` +
         `DO NOT manually edit files while LibasTrack is running.\n`
       );
     }
@@ -175,7 +182,7 @@ router.get('/status', authMiddleware, (req, res) => {
     success: true,
     storageType: req.user.storageType,
     localPath: base,
-    spreadsheetsPath: base ? path.join(base, 'Spreadsheets') : null,
+    spreadsheetsPath: base ? path.join(base, 'Database') : null,
     imagesPath: base ? path.join(base, 'Images') : null,
     driveConnected: req.user.driveConnected,
     driveName: req.user.driveName,

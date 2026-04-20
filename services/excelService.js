@@ -12,7 +12,7 @@ class ExcelService {
   }
 
   _filePath(filename) {
-    return path.join(this.localPath, filename);
+    return path.join(this.localPath, 'Database', filename);
   }
 
   async _loadWorkbook(filename) {
@@ -107,7 +107,8 @@ class ExcelService {
       const wb = await this._loadWorkbook('Financial.xlsx');
       const ws = wb.getWorksheet('Transactions') || wb.addWorksheet('Transactions');
       const values = [
-        txn.transactionId, txn.orderId, txn.price,
+        txn.transactionId, txn.orderId, txn.customerId || '', txn.customerName || '',
+        txn.orderStatus || '', txn.orderTotal || 0, txn.price,
         txn.paymentMethod, txn.paymentStatus,
         new Date(txn.transactionDate || txn.createdAt).toLocaleDateString(),
       ];
@@ -116,6 +117,24 @@ class ExcelService {
       else { ws.addRow(values); }
       await this._save(wb, 'Financial.xlsx');
     } catch (e) { console.error('Excel financial sync error:', e.message); }
+  }
+
+  async upsertReturn(ret) {
+    try {
+      const wb = await this._loadWorkbook('Returns.xlsx');
+      const ws = wb.getWorksheet('Returns') || wb.addWorksheet('Returns');
+      const values = [
+        ret.returnId, ret.orderId, ret.customerId || '', ret.customerName || '',
+        ret.productId || '', ret.productName || '', ret.reason || '', ret.type || '',
+        ret.status || '', ret.refundAmount || 0,
+        new Date(ret.requestDate || ret.createdAt).toLocaleDateString(),
+        ret.notes || '',
+      ];
+      const existing = this._findRow(ws, 1, ret.returnId);
+      if (existing) { ws.getRow(existing).values = ['', ...values]; }
+      else { ws.addRow(values); }
+      await this._save(wb, 'Returns.xlsx');
+    } catch (e) { console.error('Excel returns sync error:', e.message); }
   }
 
   async upsertSupplier(supplier) {

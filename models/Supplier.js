@@ -3,7 +3,7 @@ const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, de
 const Counter = mongoose.models.CounterSup || mongoose.model('CounterSup', counterSchema);
 
 const supplierSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   supplierId: { type: String, unique: true },
   name: { type: String, required: true },
   contactPerson: { type: String },
@@ -13,18 +13,21 @@ const supplierSchema = new mongoose.Schema({
   address: { type: String },
   city: { type: String },
   country: { type: String, default: 'Pakistan' },
-  category: { type: String, enum: ['Fabric', 'Embroidery', 'Stitching', 'Packaging', 'Printing', 'Accessories', 'Wholesale', 'Other'], default: 'Fabric' },
+  category: { type: String, enum: ['Fabric', 'Embroidery', 'Stitching', 'Packaging', 'Printing', 'Accessories', 'Wholesale', 'Other'], default: 'Fabric', index: true },
   materials: [String],
   rating: { type: Number, min: 1, max: 5 },
   leadTimeDays: { type: Number },
   minimumOrder: { type: String },
   paymentTerms: { type: String },
   notes: { type: String },
-  isActive: { type: Boolean, default: true },
+  isActive: { type: Boolean, default: true, index: true },
   totalPurchased: { type: Number, default: 0 },
   sheetRowIndex: { type: Number },
   createdAt: { type: Date, default: Date.now }
 });
+
+// Compound index for filtered queries
+supplierSchema.index({ userId: 1, isActive: 1 });
 
 supplierSchema.pre('save', async function(next) {
   if (this.isNew && !this.supplierId) {

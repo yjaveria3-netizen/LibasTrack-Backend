@@ -1,23 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
-const mongoose = require('mongoose');
-
-const checklistItemSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  phase: { type: String, required: true },
-  task: { type: String, required: true },
-  responsible: { type: String, default: '' },
-  dueDate: { type: Date },
-  priority: { type: String, enum: ['Low', 'Medium', 'High'], default: 'Medium' },
-  notes: { type: String, default: '' },
-  completed: { type: Boolean, default: false },
-  completedAt: { type: Date },
-  order: { type: Number, default: 0 },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const ChecklistItem = mongoose.models.ChecklistItem || mongoose.model('ChecklistItem', checklistItemSchema);
+const ChecklistItem = require('../models/ChecklistItem');
 
 const DEFAULT_PHASES = [
   {

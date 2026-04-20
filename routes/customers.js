@@ -58,6 +58,16 @@ router.get('/stats/summary', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+router.get('/stats/top', authMiddleware, async (req, res) => {
+  try {
+    const topCustomers = await Customer.find({ userId: req.user._id })
+      .sort({ totalSpent: -1 })
+      .limit(5)
+      .select('fullName totalSpent totalOrders segment city');
+    res.json({ success: true, topCustomers });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const customer = await Customer.findOne({ _id: req.params.id, userId: req.user._id });

@@ -3,10 +3,10 @@ const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, de
 const Counter = mongoose.models.CounterCust || mongoose.model('CounterCust', counterSchema);
 
 const customerSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   customerId: { type: String, unique: true },
   fullName: { type: String, required: true },
-  email: { type: String },
+  email: { type: String, index: true },
   phone: { type: String },
   whatsapp: { type: String },
   address: { type: String },
@@ -17,7 +17,7 @@ const customerSchema = new mongoose.Schema({
   gender: { type: String, enum: ['Female', 'Male', 'Non-binary', 'Prefer not to say'] },
 
   // CRM
-  segment: { type: String, enum: ['VIP', 'Loyal', 'Regular', 'New', 'At Risk', 'Inactive'], default: 'New' },
+  segment: { type: String, enum: ['VIP', 'Loyal', 'Regular', 'New', 'At Risk', 'Inactive'], default: 'New', index: true },
   loyaltyPoints: { type: Number, default: 0 },
   totalSpent: { type: Number, default: 0 },
   totalOrders: { type: Number, default: 0 },
@@ -34,6 +34,9 @@ const customerSchema = new mongoose.Schema({
   sheetRowIndex: { type: Number },
   createdAt: { type: Date, default: Date.now }
 });
+
+// Compound index for filtered queries
+customerSchema.index({ userId: 1, segment: 1 });
 
 customerSchema.pre('save', async function(next) {
   if (this.isNew && !this.customerId) {

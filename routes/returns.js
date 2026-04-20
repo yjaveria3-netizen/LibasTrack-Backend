@@ -1,53 +1,49 @@
-const mongoose = require('mongoose');
-const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
-const Counter = mongoose.model('CounterRet', counterSchema);
-
-const returnSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  returnId: { type: String, unique: true },
-  orderId: { type: String, required: true },
-  customerId: { type: String },
-  customerName: { type: String },
-  productId: { type: String },
-  productName: { type: String },
-  quantity: { type: Number, default: 1 },
-  reason: {
-    type: String,
-    enum: ['Wrong Size','Wrong Item','Defective/Damaged','Not as Described','Changed Mind','Duplicate Order','Late Delivery','Quality Issue','Other'],
-    default: 'Defective/Damaged'
-  },
-  type: { type: String, enum: ['Refund','Exchange','Store Credit'], default: 'Refund' },
-  status: {
-    type: String,
-    enum: ['Requested','Approved','Item Received','Inspected','Refund Issued','Exchange Dispatched','Completed','Rejected'],
-    default: 'Requested'
-  },
-  refundAmount: { type: Number, default: 0 },
-  refundMethod: { type: String, default: 'Original Payment Method' },
-  notes: { type: String },
-  requestDate: { type: Date, default: Date.now },
-  sheetRowIndex: { type: Number },
-  createdAt: { type: Date, default: Date.now }
-});
-
-returnSchema.pre('save', async function(next) {
-  if (this.isNew && !this.returnId) {
-    const counter = await Counter.findByIdAndUpdate(
-      { _id: `returnId_${this.userId}` },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true }
-    );
-    this.returnId = `RET-${String(counter.seq).padStart(4, '0')}`;
-  }
-  next();
-});
-
-const Return = mongoose.model('Return', returnSchema);
-
-/* ── Routes ── */
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
+const Return = require('../models/Return');
+const Order = require('../models/Order');
+const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
+const ExcelService = require('../services/excelService');
+
+function syncToSheets(user, ret, rowIndex = null) {
+  if (!user.driveConnected || !user.spreadsheetIds?.returns) return;
+  syncAsync(async () => {
+    const svc = new GoogleSheetsService(user.accessToken, user.refreshToken);
+    const values = [
+      ret.returnId, ret.orderId, ret.customerId || '', ret.customerName || '',
+      ret.productId || '', ret.productName || '', ret.reason, ret.type,
+      ret.status, ret.refundAmount || 0,
+      new Date(ret.requestDate || ret.createdAt).toLocaleDateString('en-PK'),
+      ret.notes || '',
+    ];
+    if (rowIndex) await svc.updateRow(user.spreadsheetIds.returns, rowIndex, values);
+    else return await svc.appendRow(user.spreadsheetIds.returns, values);
+  });
+}
+
+function syncToExcel(user, ret) {
+  if (user.storageType !== 'local_excel' || !user.localPath) return;
+  new ExcelService(user.localPath).upsertReturn(ret);
+}
+
+async function populateReturnRelations(userId, payload) {
+  if (!payload.orderId) return payload;
+  const order = await Order.findOne({ userId, orderId: payload.orderId })
+    .select('customerId customerName items');
+  if (!order) return payload;
+
+  payload.customerId = payload.customerId || order.customerId || '';
+  payload.customerName = payload.customerName || order.customerName || '';
+
+  if ((!payload.productId || !payload.productName) && Array.isArray(order.items) && order.items.length > 0) {
+    const item = order.items[0];
+    payload.productId = payload.productId || item.productId || '';
+    payload.productName = payload.productName || item.productName || '';
+  }
+
+  return payload;
+}
 
 router.get('/', authMiddleware, async (req, res) => {
   try {
@@ -76,14 +72,23 @@ router.get('/stats/summary', authMiddleware, async (req, res) => {
       { $match: { userId: req.user._id, status: { $in: ['Refund Issued','Completed'] } } },
       { $group: { _id: null, total: { $sum: '$refundAmount' } } }
     ]);
-    res.json({ success:true, total, pending, completed, totalRefunded: refundAgg[0]?.total || 0 });
+    const byReason = await Return.aggregate([
+      { $match: { userId: req.user._id } },
+      { $group: { _id: '$reason', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+    res.json({ success:true, total, pending, completed, totalRefunded: refundAgg[0]?.total || 0, byReason });
   } catch(err) { res.status(500).json({ success:false, message:err.message }); }
 });
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const ret = new Return({ userId: req.user._id, ...req.body });
+    const payload = { ...req.body };
+    await populateReturnRelations(req.user._id, payload);
+    const ret = new Return({ userId: req.user._id, ...payload });
     await ret.save();
+    syncToSheets(req.user, ret);
+    syncToExcel(req.user, ret);
     res.status(201).json({ success:true, return: ret });
   } catch(err) { res.status(500).json({ success:false, message:err.message }); }
 });
@@ -92,8 +97,12 @@ router.put('/:id', authMiddleware, async (req, res) => {
   try {
     const ret = await Return.findOne({ _id: req.params.id, userId: req.user._id });
     if (!ret) return res.status(404).json({ success:false, message:'Not found' });
-    Object.assign(ret, req.body);
+    const payload = { ...req.body };
+    await populateReturnRelations(req.user._id, payload);
+    Object.assign(ret, payload);
     await ret.save();
+    syncToSheets(req.user, ret, ret.sheetRowIndex);
+    syncToExcel(req.user, ret);
     res.json({ success:true, return: ret });
   } catch(err) { res.status(500).json({ success:false, message:err.message }); }
 });
@@ -102,6 +111,12 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const ret = await Return.findOne({ _id: req.params.id, userId: req.user._id });
     if (!ret) return res.status(404).json({ success:false, message:'Not found' });
+    if (ret.sheetRowIndex && req.user.driveConnected) {
+      syncAsync(async () => {
+        const svc = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
+        await svc.deleteRow(req.user.spreadsheetIds.returns, ret.sheetRowIndex);
+      });
+    }
     await ret.deleteOne();
     res.json({ success:true, message:'Return deleted' });
   } catch(err) { res.status(500).json({ success:false, message:err.message }); }

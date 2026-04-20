@@ -3,9 +3,13 @@ const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, de
 const Counter = mongoose.models.CounterFin || mongoose.model('CounterFin', counterSchema);
 
 const financialSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   transactionId: { type: String, unique: true },
-  orderId: { type: String, required: true },
+  orderId: { type: String, required: true, index: true },
+  customerId: { type: String, index: true },
+  customerName: { type: String },
+  orderStatus: { type: String },
+  orderTotal: { type: Number, default: 0 },
   price: { type: Number, required: true },
   paymentMethod: {
     type: String,
@@ -15,12 +19,17 @@ const financialSchema = new mongoose.Schema({
   paymentStatus: {
     type: String,
     enum: ['Pending', 'Completed', 'Failed', 'Refunded'],
-    default: 'Pending'
+    default: 'Pending',
+    index: true
   },
-  transactionDate: { type: Date, default: Date.now },
+  transactionDate: { type: Date, default: Date.now, index: true },
   sheetRowIndex: { type: Number },
   createdAt: { type: Date, default: Date.now }
 });
+
+// Compound indexes for filtered queries
+financialSchema.index({ userId: 1, paymentStatus: 1 });
+financialSchema.index({ userId: 1, transactionDate: -1 });
 
 financialSchema.pre('save', async function(next) {
   if (this.isNew && !this.transactionId) {

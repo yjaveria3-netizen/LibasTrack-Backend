@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
 const Financial = require('../models/Financial');
+const Order = require('../models/Order');
 const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
 const ExcelService = require('../services/excelService');
 
@@ -10,7 +11,8 @@ function syncToSheets(user, txn, rowIndex = null) {
   syncAsync(async () => {
     const svc = new GoogleSheetsService(user.accessToken, user.refreshToken);
     const values = [
-      txn.transactionId, txn.orderId, txn.price, txn.paymentMethod,
+      txn.transactionId, txn.orderId, txn.customerId || '', txn.customerName || '',
+      txn.orderStatus || '', txn.orderTotal || 0, txn.price, txn.paymentMethod,
       txn.paymentStatus, new Date(txn.transactionDate || txn.createdAt).toLocaleDateString('en-PK'),
     ];
     if (rowIndex) await svc.updateRow(user.spreadsheetIds.financial, rowIndex, values);
@@ -21,6 +23,20 @@ function syncToSheets(user, txn, rowIndex = null) {
 function syncToExcel(user, txn) {
   if (user.storageType !== 'local_excel' || !user.localPath) return;
   new ExcelService(user.localPath).upsertTransaction(txn);
+}
+
+async function populateFinancialRelations(userId, payload) {
+  if (!payload.orderId) return payload;
+
+  const order = await Order.findOne({ userId, orderId: payload.orderId })
+    .select('customerId customerName status total');
+
+  if (!order) return payload;
+  payload.customerId = order.customerId || payload.customerId;
+  payload.customerName = order.customerName || payload.customerName;
+  payload.orderStatus = order.status || payload.orderStatus;
+  payload.orderTotal = Number(order.total || 0);
+  return payload;
 }
 
 router.get('/', authMiddleware, async (req, res) => {
@@ -52,11 +68,14 @@ router.get('/stats/summary', authMiddleware, async (req, res) => {
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { orderId, price, paymentMethod } = req.body;
+    const payload = { ...req.body };
+    const { orderId, price, paymentMethod } = payload;
     if (!orderId || !price || !paymentMethod) {
       return res.status(400).json({ success: false, message: 'Order ID, price, and payment method are required' });
     }
-    const txn = new Financial({ userId: req.user._id, ...req.body });
+
+    await populateFinancialRelations(req.user._id, payload);
+    const txn = new Financial({ userId: req.user._id, ...payload });
     await txn.save();
     syncToSheets(req.user, txn);
     syncToExcel(req.user, txn);
@@ -68,7 +87,9 @@ router.put('/:id', authMiddleware, async (req, res) => {
   try {
     const txn = await Financial.findOne({ _id: req.params.id, userId: req.user._id });
     if (!txn) return res.status(404).json({ success: false, message: 'Transaction not found' });
-    Object.assign(txn, req.body);
+    const payload = { ...req.body };
+    await populateFinancialRelations(req.user._id, payload);
+    Object.assign(txn, payload);
     await txn.save();
     syncToSheets(req.user, txn, txn.sheetRowIndex);
     syncToExcel(req.user, txn);

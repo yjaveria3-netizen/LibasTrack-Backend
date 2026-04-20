@@ -7,6 +7,7 @@ const ExcelService = require('../services/excelService');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { productCreateValidation, mongoIdValidation } = require('../middleware/validators');
 
 // Multer: store in memory, validate image types, max 10 MB
 const upload = multer({
@@ -52,8 +53,8 @@ function saveImageLocally(user, filename, buffer) {
   try {
     if (!user.localPath) return null;
 
-    // Use the dedicated Images/ sub-folder (created during storage setup)
-    const imagesDir = path.join(user.localPath, 'Images');
+    // Use the dedicated Images/products sub-folder
+    const imagesDir = path.join(user.localPath, 'Images', 'products');
     fs.mkdirSync(imagesDir, { recursive: true });   // safety: create if missing
 
     const dest = path.join(imagesDir, filename);
@@ -79,12 +80,37 @@ function deleteImageLocally(imagePath) {
   }
 }
 
+function normalizeProductPayload(body = {}) {
+  const payload = { ...body };
+
+  if (payload.variants !== undefined) {
+    if (payload.variants === '' || payload.variants === null) {
+      payload.variants = [];
+    } else if (typeof payload.variants === 'string') {
+      try {
+        const parsed = JSON.parse(payload.variants);
+        payload.variants = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        payload.variants = [];
+      }
+    } else if (!Array.isArray(payload.variants)) {
+      payload.variants = [];
+    }
+  }
+
+  return payload;
+}
+
 /* ── Routes ─────────────────────────────────────────────────── */
 
 // GET /api/products
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const { page = 1, limit = 20, category, status, search } = req.query;
+    // Enforce server-side limit cap (max 100)
+    const safeLim = Math.min(Math.max(1, parseInt(limit) || 20), 100);
+    const safePage = Math.max(1, parseInt(page) || 1);
+    
     const query = { userId: req.user._id };
     if (category) query.category = category;
     if (status) query.status = status;
@@ -96,9 +122,9 @@ router.get('/', authMiddleware, async (req, res) => {
     const total = await Product.countDocuments(query);
     const products = await Product.find(query)
       .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit));
-    res.json({ success: true, products, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
+      .skip((safePage - 1) * safeLim)
+      .limit(safeLim);
+    res.json({ success: true, products, total, page: safePage, totalPages: Math.ceil(total / safeLim) });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
@@ -118,6 +144,20 @@ router.get('/stats/summary', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+// GET /api/products/stats/low-stock
+router.get('/stats/low-stock', authMiddleware, async (req, res) => {
+  try {
+    const products = await Product.find({ 
+      userId: req.user._id, 
+      $expr: { $lte: ['$stockQty', '$lowStockAlert'] }
+    })
+    .sort({ stockQty: 1 })
+    .limit(10)
+    .select('name productId sku stockQty lowStockAlert');
+    res.json({ success: true, lowStockProducts: products });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 // GET /api/products/:id
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
@@ -128,14 +168,15 @@ router.get('/:id', authMiddleware, async (req, res) => {
 });
 
 // POST /api/products
-router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
+router.post('/', authMiddleware, upload.single('image'), productCreateValidation, async (req, res) => {
   try {
-    const { name, category, price } = req.body;
+    const payload = normalizeProductPayload(req.body);
+    const { name, category, price } = payload;
     if (!name || !category || !price) {
       return res.status(400).json({ success: false, message: 'Name, category, and price are required' });
     }
 
-    const product = new Product({ userId: req.user._id, ...req.body });
+    const product = new Product({ userId: req.user._id, ...payload });
 
     // Handle image upload
     if (req.file) {
@@ -163,6 +204,7 @@ router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
 // PUT /api/products/:id
 router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
   try {
+    const payload = normalizeProductPayload(req.body);
     const product = await Product.findOne({ _id: req.params.id, userId: req.user._id });
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
 
@@ -171,7 +213,7 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
       deleteImageLocally(product.imageLink);
     }
 
-    Object.assign(product, req.body);
+    Object.assign(product, payload);
 
     if (req.file) {
       const filename = `${Date.now()}_${req.file.originalname.replace(/\s/g, '_')}`;
@@ -186,7 +228,7 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
     }
 
     // Handle image removal (frontend sends removeImage: 'true')
-    if (req.body.removeImage === 'true') {
+    if (payload.removeImage === 'true') {
       if (product.imageLink && product.imageLink.startsWith('file://')) {
         deleteImageLocally(product.imageLink);
       }
