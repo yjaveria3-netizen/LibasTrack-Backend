@@ -2,19 +2,31 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
 const Order = require('../models/Order');
-const { GoogleSheetsService } = require('../services/googleSheets');
+const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
+const ExcelService = require('../services/excelService');
 
-async function syncToSheets(user, order, rowIndex = null) {
-  if (!user.driveConnected || !user.spreadsheetIds?.orders) return null;
-  try {
-    const service = new GoogleSheetsService(user.accessToken, user.refreshToken);
+function syncToSheets(user, order, rowIndex = null) {
+  if (!user.driveConnected || !user.spreadsheetIds?.orders) return;
+  syncAsync(async () => {
+    const svc = new GoogleSheetsService(user.accessToken, user.refreshToken);
     const values = [
-      order.orderId, order.customerId, order.productId, order.quantity,
-      order.total, order.status, new Date(order.orderDate).toLocaleDateString('en-PK')
+      order.orderId, order.customerId, order.customerName || '', order.customerPhone || '',
+      order.subtotal, order.discountAmount || 0, order.shippingCost || 0, order.taxAmount || 0,
+      order.total, order.currency || 'PKR', order.status, order.channel || '',
+      order.priority || 'Normal', order.shippingMethod || '', order.courierName || '',
+      order.trackingNumber || '', order.shippingAddress || '',
+      order.estimatedDelivery ? new Date(order.estimatedDelivery).toLocaleDateString() : '',
+      order.notes || '',
+      new Date(order.orderDate || order.createdAt).toLocaleDateString('en-PK'),
     ];
-    if (rowIndex) { await service.updateRow(user.spreadsheetIds.orders, rowIndex, values); return rowIndex; }
-    return await service.appendRow(user.spreadsheetIds.orders, values);
-  } catch (err) { console.error('Sheets sync error:', err.message); return null; }
+    if (rowIndex) await svc.updateRow(user.spreadsheetIds.orders, rowIndex, values);
+    else return await svc.appendRow(user.spreadsheetIds.orders, values);
+  });
+}
+
+function syncToExcel(user, order) {
+  if (user.storageType !== 'local_excel' || !user.localPath) return;
+  new ExcelService(user.localPath).upsertOrder(order);
 }
 
 router.get('/', authMiddleware, async (req, res) => {
@@ -24,7 +36,8 @@ router.get('/', authMiddleware, async (req, res) => {
     if (status) query.status = status;
     if (search) query.$or = [
       { orderId: { $regex: search, $options: 'i' } },
-      { customerId: { $regex: search, $options: 'i' } }
+      { customerId: { $regex: search, $options: 'i' } },
+      { customerName: { $regex: search, $options: 'i' } },
     ];
     const total = await Order.countDocuments(query);
     const orders = await Order.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(parseInt(limit));
@@ -34,12 +47,14 @@ router.get('/', authMiddleware, async (req, res) => {
 
 router.get('/stats/summary', authMiddleware, async (req, res) => {
   try {
-    const total = await Order.countDocuments({ userId: req.user._id });
-    const pending = await Order.countDocuments({ userId: req.user._id, status: 'Pending' });
-    const delivered = await Order.countDocuments({ userId: req.user._id, status: 'Delivered' });
-    const revenue = await Order.aggregate([
-      { $match: { userId: req.user._id, status: { $ne: 'Cancelled' } } },
-      { $group: { _id: null, total: { $sum: '$total' } } }
+    const [total, pending, delivered, revenue] = await Promise.all([
+      Order.countDocuments({ userId: req.user._id }),
+      Order.countDocuments({ userId: req.user._id, status: 'Pending' }),
+      Order.countDocuments({ userId: req.user._id, status: 'Delivered' }),
+      Order.aggregate([
+        { $match: { userId: req.user._id, status: { $nin: ['Cancelled', 'Returned', 'Refunded'] } } },
+        { $group: { _id: null, total: { $sum: '$total' } } }
+      ]),
     ]);
     res.json({ success: true, total, pending, delivered, revenue: revenue[0]?.total || 0 });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
@@ -47,15 +62,15 @@ router.get('/stats/summary', authMiddleware, async (req, res) => {
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { customerId, productId, quantity, total, status, orderDate } = req.body;
-    if (!customerId || !productId || !quantity || !total) {
-      return res.status(400).json({ success: false, message: 'Customer ID, Product ID, quantity, and total are required' });
+    const { customerId, total } = req.body;
+    if (!customerId || !total) {
+      return res.status(400).json({ success: false, message: 'Customer ID and total are required' });
     }
-    const order = new Order({ userId: req.user._id, customerId, productId, quantity, total, status: status || 'Pending', orderDate: orderDate || new Date() });
+    const order = new Order({ userId: req.user._id, ...req.body });
     await order.save();
-    const rowIndex = await syncToSheets(req.user, order);
-    if (rowIndex) { order.sheetRowIndex = rowIndex; await order.save(); }
-    res.status(201).json({ success: true, order, message: 'Order created and synced to Google Sheets!' });
+    syncToSheets(req.user, order);
+    syncToExcel(req.user, order);
+    res.status(201).json({ success: true, order });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
@@ -65,8 +80,9 @@ router.put('/:id', authMiddleware, async (req, res) => {
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
     Object.assign(order, req.body);
     await order.save();
-    if (order.sheetRowIndex) await syncToSheets(req.user, order, order.sheetRowIndex);
-    res.json({ success: true, order, message: 'Order updated and synced!' });
+    syncToSheets(req.user, order, order.sheetRowIndex);
+    syncToExcel(req.user, order);
+    res.json({ success: true, order });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
@@ -75,23 +91,13 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     const order = await Order.findOne({ _id: req.params.id, userId: req.user._id });
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
     if (order.sheetRowIndex && req.user.driveConnected) {
-      try { const s = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken); await s.deleteRow(req.user.spreadsheetIds.orders, order.sheetRowIndex); } catch (e) {}
+      syncAsync(async () => {
+        const svc = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
+        await svc.deleteRow(req.user.spreadsheetIds.orders, order.sheetRowIndex);
+      });
     }
     await order.deleteOne();
     res.json({ success: true, message: 'Order deleted' });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
-});
-
-router.get('/stats/summary', authMiddleware, async (req, res) => {
-  try {
-    const total = await Order.countDocuments({ userId: req.user._id });
-    const pending = await Order.countDocuments({ userId: req.user._id, status: 'Pending' });
-    const delivered = await Order.countDocuments({ userId: req.user._id, status: 'Delivered' });
-    const revenue = await Order.aggregate([
-      { $match: { userId: req.user._id, status: { $ne: 'Cancelled' } } },
-      { $group: { _id: null, total: { $sum: '$total' } } }
-    ]);
-    res.json({ success: true, total, pending, delivered, revenue: revenue[0]?.total || 0 });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 

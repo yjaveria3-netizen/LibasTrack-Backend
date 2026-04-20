@@ -19,6 +19,7 @@ const userSchema = new mongoose.Schema({
     instagram: { type: String, default: '' },
     phone: { type: String, default: '' },
     address: { type: String, default: '' },
+    city: { type: String, default: '' },
     founded: { type: String, default: '' },
     category: {
       type: String,
@@ -55,4 +56,4 @@ const userSchema = new mongoose.Schema({
   lastLogin: { type: Date, default: Date.now }
 });
 
-module.exports = mongoose.model('User', userSchema);
+module.exports = mongoose.models.User || mongoose.model('User', userSchema);

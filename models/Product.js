@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
-const Counter = mongoose.model('CounterProd', counterSchema);
+const Counter = mongoose.models.CounterProd || mongoose.model('CounterProd', counterSchema);
 
 const variantSchema = new mongoose.Schema({
   size: String,
@@ -55,7 +55,11 @@ const productSchema = new mongoose.Schema({
   sheetRowIndex: { type: Number },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
+}, {
+  // 'collection' is a reserved Mongoose key — suppress the warning since it's intentional here
+  suppressReservedKeysWarning: true
 });
+
 
 productSchema.pre('save', async function(next) {
   if (this.isNew && !this.productId) {
@@ -70,4 +74,4 @@ productSchema.pre('save', async function(next) {
   next();
 });
 
-module.exports = mongoose.model('Product', productSchema);
+module.exports = mongoose.models.Product || mongoose.model('Product', productSchema);

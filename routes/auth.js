@@ -50,10 +50,15 @@ router.get('/google/callback', async (req, res) => {
     }
     await user.save();
 
-    const jwtToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    // needsOnboarding = new user OR brand onboarding not complete
+    const jwtToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+    // Determine next step for frontend redirect
     const needsOnboarding = isNewUser || !user.brand.onboardingComplete;
-    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${jwtToken}&needsOnboarding=${needsOnboarding}`);
+    const needsStorageSetup = !needsOnboarding && !user.storageType;
+    res.redirect(
+      `${process.env.FRONTEND_URL}/auth/callback?token=${jwtToken}` +
+      `&needsOnboarding=${needsOnboarding}` +
+      `&needsStorageSetup=${needsStorageSetup}`
+    );
   } catch (err) {
     console.error('OAuth callback error:', err);
     res.redirect(`${process.env.FRONTEND_URL}/login?error=oauth_failed`);
@@ -81,7 +86,7 @@ router.get('/me', authMiddleware, async (req, res) => {
 // Update brand profile (onboarding + settings)
 router.put('/brand', authMiddleware, async (req, res) => {
   try {
-    const allowed = ['name','tagline','logo','primaryColor','accentColor','currency','country','website','instagram','phone','address','founded','category'];
+    const allowed = ['name','tagline','logo','primaryColor','accentColor','currency','country','website','instagram','phone','address','city','founded','category'];
     allowed.forEach(k => { if (req.body[k] !== undefined) req.user.brand[k] = req.body[k]; });
     if (req.body.complete) req.user.brand.onboardingComplete = true;
     await req.user.save();
@@ -91,6 +96,16 @@ router.put('/brand', authMiddleware, async (req, res) => {
 
 router.post('/logout', authMiddleware, async (req, res) => {
   res.json({ success: true, message: 'Logged out successfully' });
+});
+
+// Sliding session refresh — accepts current valid JWT, returns a fresh 30d token
+router.post('/refresh', authMiddleware, async (req, res) => {
+  try {
+    const newToken = jwt.sign({ userId: req.user._id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+    res.json({ success: true, token: newToken });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 module.exports = router;

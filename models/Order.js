@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
-const Counter = mongoose.model('CounterOrd', counterSchema);
+const Counter = mongoose.models.CounterOrd || mongoose.model('CounterOrd', counterSchema);
 
 const orderItemSchema = new mongoose.Schema({
   productId: { type: String, required: true },
@@ -69,4 +69,4 @@ orderSchema.pre('save', async function(next) {
   next();
 });
 
-module.exports = mongoose.model('Order', orderSchema);
+module.exports = mongoose.models.Order || mongoose.model('Order', orderSchema);

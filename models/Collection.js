@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
-const Counter = mongoose.model('CounterBrandCol', counterSchema);
+const Counter = mongoose.models.CounterBrandCol || mongoose.model('CounterBrandCol', counterSchema);
 
 // Named 'BrandCollection' to avoid Mongoose reserved 'collection' keyword warning
 const brandCollectionSchema = new mongoose.Schema({
@@ -36,4 +36,4 @@ brandCollectionSchema.pre('save', async function(next) {
   next();
 });
 
-module.exports = mongoose.model('BrandCollection', brandCollectionSchema);
+module.exports = mongoose.models.BrandCollection || mongoose.model('BrandCollection', brandCollectionSchema);

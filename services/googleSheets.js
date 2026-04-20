@@ -1,168 +1,148 @@
 const { google } = require('googleapis');
 
+const SPREADSHEET_HEADERS = {
+  products: ['Product ID', 'Name', 'Category', 'Subcategory', 'Collection', 'Season', 'Fabric', 'Cost Price', 'Price', 'Sale Price', 'Currency', 'SKU', 'Stock Qty', 'Status', 'Tags', 'Image Link', 'Created At'],
+  orders: ['Order ID', 'Customer ID', 'Customer Name', 'Phone', 'Subtotal', 'Discount', 'Shipping', 'Tax', 'Total', 'Currency', 'Status', 'Channel', 'Priority', 'Shipping Method', 'Courier', 'Tracking #', 'Address', 'Est. Delivery', 'Notes', 'Order Date'],
+  customers: ['Customer ID', 'Full Name', 'Email', 'Phone', 'WhatsApp', 'City', 'Country', 'Address', 'Gender', 'Segment', 'Source', 'Total Spent', 'Total Orders', 'Loyalty Points', 'Date Joined', 'Subscribed', 'Tags', 'Notes'],
+  financial: ['Transaction ID', 'Order ID', 'Amount', 'Payment Method', 'Payment Status', 'Transaction Date'],
+  suppliers: ['Supplier ID', 'Name', 'Contact Person', 'Email', 'Phone', 'WhatsApp', 'City', 'Country', 'Category', 'Materials', 'Rating', 'Lead Time (Days)', 'Min Order', 'Payment Terms', 'Active', 'Total Purchased', 'Notes'],
+  collections: ['Collection ID', 'Name', 'Description', 'Season', 'Year', 'Theme', 'Status', 'Launch Date', 'Product Count', 'Notes'],
+  returns: ['Return ID', 'Order ID', 'Customer ID', 'Customer Name', 'Reason', 'Status', 'Resolution', 'Refund Amount', 'Return Date', 'Notes'],
+};
+
 class GoogleSheetsService {
   constructor(accessToken, refreshToken) {
-    this.oauth2Client = new google.auth.OAuth2(
+    this.auth = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
       process.env.GOOGLE_REDIRECT_URI
     );
-    this.oauth2Client.setCredentials({
+    this.auth.setCredentials({
       access_token: accessToken,
-      refresh_token: refreshToken
+      refresh_token: refreshToken,
     });
-    this.sheets = google.sheets({ version: 'v4', auth: this.oauth2Client });
-    this.drive = google.drive({ version: 'v3', auth: this.oauth2Client });
+    this.sheets = google.sheets({ version: 'v4', auth: this.auth });
+    this.drive = google.drive({ version: 'v3', auth: this.auth });
   }
 
-  // Extract spreadsheet ID from Google Sheets URL
-  extractSheetId(url) {
-    const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  async createSpreadsheet(title, folderId, sheetType) {
+    const headers = SPREADSHEET_HEADERS[sheetType] || [];
+    const resource = {
+      properties: { title },
+      sheets: [{ properties: { title: sheetType.charAt(0).toUpperCase() + sheetType.slice(1) } }],
+    };
+    const { data } = await this.sheets.spreadsheets.create({ resource });
+    const spreadsheetId = data.spreadsheetId;
+    const sheetId = data.sheets?.[0]?.properties?.sheetId || 0;
+
+    // Write header row
+    if (headers.length) {
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: 'A1',
+        valueInputOption: 'RAW',
+        resource: { values: [headers] },
+      });
+      // Format header: bold, sky-blue background
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        resource: {
+          requests: [
+            {
+              repeatCell: {
+                range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+                cell: {
+                  userEnteredFormat: {
+                    backgroundColor: { red: 0.055, green: 0.647, blue: 0.914 },
+                    textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+                  },
+                },
+                fields: 'userEnteredFormat(backgroundColor,textFormat)',
+              },
+            },
+            { updateSheetProperties: { properties: { sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
+          ],
+        },
+      });
+    }
+
+    // Move to folder if provided
+    if (folderId) {
+      await this.drive.files.update({
+        fileId: spreadsheetId,
+        addParents: folderId,
+        removeParents: 'root',
+        fields: 'id, parents',
+      });
+    }
+    return spreadsheetId;
+  }
+
+  async appendRow(spreadsheetId, values) {
+    if (!spreadsheetId) return null;
+    const { data } = await this.sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: 'A:A',
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      resource: { values: [values] },
+    });
+    const updatedRange = data.updates?.updatedRange;
+    if (updatedRange) {
+      const match = updatedRange.match(/(\d+)$/);
+      return match ? parseInt(match[1]) : null;
+    }
+    return null;
+  }
+
+  async updateRow(spreadsheetId, rowIndex, values) {
+    if (!spreadsheetId || !rowIndex) return;
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `A${rowIndex}`,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: [values] },
+    });
+  }
+
+  async deleteRow(spreadsheetId, rowIndex) {
+    if (!spreadsheetId || !rowIndex) return;
+    const { data } = await this.sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
+    const sheetId = data.sheets?.[0]?.properties?.sheetId || 0;
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      resource: {
+        requests: [{
+          deleteDimension: {
+            range: { sheetId, dimension: 'ROWS', startIndex: rowIndex - 1, endIndex: rowIndex },
+          },
+        }],
+      },
+    });
+  }
+
+  async getFolderIdFromLink(folderLink) {
+    const match = folderLink.match(/\/folders\/([a-zA-Z0-9_-]+)/);
     return match ? match[1] : null;
   }
 
-  // Extract folder ID from Google Drive URL
-  extractFolderId(url) {
-    const match = url.match(/\/folders\/([a-zA-Z0-9-_]+)/);
-    if (match) return match[1];
-    const match2 = url.match(/id=([a-zA-Z0-9-_]+)/);
-    return match2 ? match2[1] : null;
-  }
-
-  // Create or find a spreadsheet in Drive
-  async findOrCreateSpreadsheet(folderId, sheetName, headers) {
-    try {
-      // Search for existing spreadsheet
-      const searchRes = await this.drive.files.list({
-        q: `'${folderId}' in parents and name='${sheetName}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
-        fields: 'files(id, name)'
-      });
-
-      if (searchRes.data.files.length > 0) {
-        return searchRes.data.files[0].id;
-      }
-
-      // Create new spreadsheet
-      const createRes = await this.sheets.spreadsheets.create({
-        requestBody: {
-          properties: { title: sheetName },
-          sheets: [{
-            properties: { title: 'Data' },
-            data: [{
-              startRow: 0,
-              startColumn: 0,
-              rowData: [{
-                values: headers.map(h => ({
-                  userEnteredValue: { stringValue: h },
-                  userEnteredFormat: {
-                    backgroundColor: { red: 0.18, green: 0.18, blue: 0.18 },
-                    textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true },
-                    horizontalAlignment: 'CENTER'
-                  }
-                }))
-              }]
-            }]
-          }]
-        }
-      });
-
-      const sheetId = createRes.data.spreadsheetId;
-
-      // Move to folder
-      await this.drive.files.update({
-        fileId: sheetId,
-        addParents: folderId,
-        removeParents: 'root',
-        fields: 'id, parents'
-      });
-
-      return sheetId;
-    } catch (err) {
-      console.error('Error creating spreadsheet:', err.message);
-      throw err;
-    }
-  }
-
-  // Append a row to a spreadsheet
-  async appendRow(spreadsheetId, values) {
-    try {
-      const res = await this.sheets.spreadsheets.values.append({
-        spreadsheetId,
-        range: 'Data!A:Z',
-        valueInputOption: 'USER_ENTERED',
-        insertDataOption: 'INSERT_ROWS',
-        requestBody: { values: [values] }
-      });
-      const updatedRange = res.data.updates.updatedRange;
-      const rowNum = parseInt(updatedRange.match(/\d+$/)[0]);
-      return rowNum;
-    } catch (err) {
-      console.error('Error appending row:', err.message);
-      throw err;
-    }
-  }
-
-  // Update a specific row
-  async updateRow(spreadsheetId, rowIndex, values) {
-    try {
-      await this.sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: `Data!A${rowIndex}:Z${rowIndex}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [values] }
-      });
-    } catch (err) {
-      console.error('Error updating row:', err.message);
-      throw err;
-    }
-  }
-
-  // Delete a row by clearing its content
-  async deleteRow(spreadsheetId, rowIndex) {
-    try {
-      const sheetMeta = await this.sheets.spreadsheets.get({ spreadsheetId });
-      const sheetId = sheetMeta.data.sheets[0].properties.sheetId;
-
-      await this.sheets.spreadsheets.batchUpdate({
-        spreadsheetId,
-        requestBody: {
-          requests: [{
-            deleteDimension: {
-              range: {
-                sheetId,
-                dimension: 'ROWS',
-                startIndex: rowIndex - 1,
-                endIndex: rowIndex
-              }
-            }
-          }]
-        }
-      });
-    } catch (err) {
-      console.error('Error deleting row:', err.message);
-      throw err;
-    }
-  }
-
-  // Get all rows from sheet
-  async getRows(spreadsheetId) {
-    try {
-      const res = await this.sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: 'Data!A:Z'
-      });
-      return res.data.values || [];
-    } catch (err) {
-      console.error('Error getting rows:', err.message);
-      throw err;
-    }
+  async findOrCreateSubfolder(parentId, folderName) {
+    const { data } = await this.drive.files.list({
+      q: `'${parentId}' in parents and name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      fields: 'files(id,name)',
+    });
+    if (data.files?.length > 0) return data.files[0].id;
+    const { data: created } = await this.drive.files.create({
+      resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
+      fields: 'id',
+    });
+    return created.id;
   }
 }
 
-// Product sheet helpers
-const PRODUCT_HEADERS = ['Product ID', 'Name', 'Category', 'Size', 'Color', 'Price (PKR)', 'Stock Qty', 'Image Link'];
-const ORDER_HEADERS = ['Order ID', 'Customer ID', 'Product ID', 'Quantity', 'Total (PKR)', 'Status', 'Order Date'];
-const CUSTOMER_HEADERS = ['Customer ID', 'Full Name', 'Email', 'Phone', 'Address', 'Date Joined'];
-const FINANCIAL_HEADERS = ['Transaction ID', 'Order ID', 'Price', 'Payment Method', 'Payment Status', 'Transaction Date'];
+// Fire-and-forget wrapper: runs sync in background, never blocks API response
+function syncAsync(fn) {
+  fn().catch(err => console.error('Background sheets sync error:', err.message));
+}
 
-module.exports = { GoogleSheetsService, PRODUCT_HEADERS, ORDER_HEADERS, CUSTOMER_HEADERS, FINANCIAL_HEADERS };
+module.exports = { GoogleSheetsService, syncAsync, SPREADSHEET_HEADERS };

@@ -1,10 +1,13 @@
 const express = require('express');
 const router = express.Router();
+const { google } = require('googleapis');
 const authMiddleware = require('../middleware/auth');
-const { GoogleSheetsService, PRODUCT_HEADERS, ORDER_HEADERS, CUSTOMER_HEADERS, FINANCIAL_HEADERS } = require('../services/googleSheets');
+const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
 const User = require('../models/User');
 
-// Connect drive
+/* POST /api/drive/connect
+   Connects a Google Drive folder and creates all spreadsheets.
+   Uses Promise.all for parallel creation — much faster than sequential. */
 router.post('/connect', authMiddleware, async (req, res) => {
   try {
     const { driveName, driveLink } = req.body;
@@ -13,87 +16,75 @@ router.post('/connect', authMiddleware, async (req, res) => {
     }
 
     const sheetsService = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
-    const folderId = sheetsService.extractFolderId(driveLink);
+    const folderId = await sheetsService.getFolderIdFromLink(driveLink);
 
     if (!folderId) {
-      return res.status(400).json({ success: false, message: 'Invalid Google Drive folder link' });
+      return res.status(400).json({ success: false, message: 'Invalid Google Drive folder link. Make sure you paste the full folder URL.' });
     }
 
     // Find or create Database subfolder
-    const { google } = require('googleapis');
-    const oauth2Client = new (require('googleapis').google.auth.OAuth2)(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI
+    const dbFolderId = await sheetsService.findOrCreateSubfolder(folderId, 'Database');
+
+    // Create all spreadsheets in parallel for speed
+    const sheetTypes = ['products', 'orders', 'customers', 'financial', 'suppliers', 'collections', 'returns'];
+    const sheetNames = ['Products', 'Orders', 'Customers', 'Financial', 'Suppliers', 'Collections', 'Returns'];
+
+    const sheetIds = await Promise.all(
+      sheetTypes.map((type, i) => sheetsService.createSpreadsheet(sheetNames[i], dbFolderId, type))
     );
-    oauth2Client.setCredentials({ access_token: req.user.accessToken, refresh_token: req.user.refreshToken });
-    const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
-    // Find Database folder or use root folder
-    let dbFolderId = folderId;
-    try {
-      const dbSearch = await drive.files.list({
-        q: `'${folderId}' in parents and name='Database' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-        fields: 'files(id, name)'
-      });
-      if (dbSearch.data.files.length > 0) {
-        dbFolderId = dbSearch.data.files[0].id;
-      }
-    } catch (e) {
-      console.log('Database subfolder not found, using root folder');
-    }
+    const spreadsheetIds = {};
+    sheetTypes.forEach((type, i) => { spreadsheetIds[type] = sheetIds[i]; });
 
-    // Create spreadsheets for each data type
-    const [productsSheetId, ordersSheetId, customersSheetId, financialSheetId] = await Promise.all([
-      sheetsService.findOrCreateSpreadsheet(dbFolderId, 'Products', PRODUCT_HEADERS),
-      sheetsService.findOrCreateSpreadsheet(dbFolderId, 'Orders', ORDER_HEADERS),
-      sheetsService.findOrCreateSpreadsheet(dbFolderId, 'Customer', CUSTOMER_HEADERS),
-      sheetsService.findOrCreateSpreadsheet(dbFolderId, 'Financial', FINANCIAL_HEADERS)
-    ]);
-
-    // Update user
+    // Update user — set both google and storage type
     req.user.driveConnected = true;
     req.user.driveName = driveName;
     req.user.driveLink = driveLink;
     req.user.driveId = folderId;
-    req.user.spreadsheetIds = {
-      products: productsSheetId,
-      orders: ordersSheetId,
-      customers: customersSheetId,
-      financial: financialSheetId
-    };
+    req.user.spreadsheetIds = spreadsheetIds;
+    req.user.storageType = 'google_drive';
     await req.user.save();
 
+    const baseUrl = 'https://docs.google.com/spreadsheets/d/';
     res.json({
       success: true,
-      message: 'Google Drive connected successfully! Spreadsheets are ready.',
-      spreadsheets: {
-        products: `https://docs.google.com/spreadsheets/d/${productsSheetId}`,
-        orders: `https://docs.google.com/spreadsheets/d/${ordersSheetId}`,
-        customers: `https://docs.google.com/spreadsheets/d/${customersSheetId}`,
-        financial: `https://docs.google.com/spreadsheets/d/${financialSheetId}`
-      }
+      message: 'Google Drive connected! All spreadsheets created.',
+      spreadsheets: Object.fromEntries(
+        sheetTypes.map((type, i) => [type, `${baseUrl}${sheetIds[i]}`])
+      ),
     });
   } catch (err) {
     console.error('Drive connect error:', err);
-    res.status(500).json({ success: false, message: err.message || 'Failed to connect drive' });
+    res.status(500).json({ success: false, message: err.message || 'Failed to connect drive. Check permissions.' });
   }
 });
 
-// Get drive status
+/* GET /api/drive/status */
 router.get('/status', authMiddleware, async (req, res) => {
+  const baseUrl = 'https://docs.google.com/spreadsheets/d/';
+  const ids = req.user.spreadsheetIds || {};
   res.json({
     success: true,
     connected: req.user.driveConnected,
+    storageType: req.user.storageType,
     driveName: req.user.driveName,
     driveLink: req.user.driveLink,
-    spreadsheets: req.user.spreadsheetIds ? {
-      products: req.user.spreadsheetIds.products ? `https://docs.google.com/spreadsheets/d/${req.user.spreadsheetIds.products}` : null,
-      orders: req.user.spreadsheetIds.orders ? `https://docs.google.com/spreadsheets/d/${req.user.spreadsheetIds.orders}` : null,
-      customers: req.user.spreadsheetIds.customers ? `https://docs.google.com/spreadsheets/d/${req.user.spreadsheetIds.customers}` : null,
-      financial: req.user.spreadsheetIds.financial ? `https://docs.google.com/spreadsheets/d/${req.user.spreadsheetIds.financial}` : null
-    } : null
+    spreadsheets: req.user.driveConnected ? Object.fromEntries(
+      Object.entries(ids).map(([k, v]) => [k, v ? `${baseUrl}${v}` : null])
+    ) : null,
   });
+});
+
+/* POST /api/drive/disconnect */
+router.post('/disconnect', authMiddleware, async (req, res) => {
+  try {
+    req.user.driveConnected = false;
+    req.user.storageType = null;
+    await req.user.save();
+    res.json({ success: true, message: 'Drive disconnected' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 module.exports = router;

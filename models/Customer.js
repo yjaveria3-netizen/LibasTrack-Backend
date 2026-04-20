@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
-const Counter = mongoose.model('CounterCust', counterSchema);
+const Counter = mongoose.models.CounterCust || mongoose.model('CounterCust', counterSchema);
 
 const customerSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -47,4 +47,4 @@ customerSchema.pre('save', async function(next) {
   next();
 });
 
-module.exports = mongoose.model('Customer', customerSchema);
+module.exports = mongoose.models.Customer || mongoose.model('Customer', customerSchema);

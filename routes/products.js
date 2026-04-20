@@ -2,151 +2,229 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
 const Product = require('../models/Product');
-const { GoogleSheetsService, PRODUCT_HEADERS } = require('../services/googleSheets');
+const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
+const ExcelService = require('../services/excelService');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
-// Helper to sync to Google Sheets
-async function syncToSheets(user, product, rowIndex = null) {
-  if (!user.driveConnected || !user.spreadsheetIds?.products) return null;
-  try {
-    const service = new GoogleSheetsService(user.accessToken, user.refreshToken);
+// Multer: store in memory, validate image types, max 10 MB
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+    if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
+    else cb(new Error('Only image files are allowed (jpg, jpeg, png, webp, gif)'));
+  },
+});
+
+/* ── Google Sheets sync ─────────────────────────────────────── */
+function syncToSheets(user, product, rowIndex = null) {
+  if (!user.driveConnected || !user.spreadsheetIds?.products) return;
+  syncAsync(async () => {
+    const svc = new GoogleSheetsService(user.accessToken, user.refreshToken);
     const values = [
-      product.productId, product.name, product.category, product.size || '',
-      product.color || '', product.price, product.stockQty, product.imageLink || ''
+      product.productId, product.name, product.category, product.subcategory || '',
+      product.collection || '', product.season || '', product.fabric || '',
+      product.costPrice || 0, product.price, product.salePrice || '',
+      product.currency || 'PKR', product.sku || '', product.stockQty || 0,
+      product.status, (product.tags || []).join(', '),
+      product.imageLink || product.imageViewUrl || '',
+      new Date(product.createdAt).toLocaleDateString(),
     ];
-    if (rowIndex) {
-      await service.updateRow(user.spreadsheetIds.products, rowIndex, values);
-      return rowIndex;
-    } else {
-      const row = await service.appendRow(user.spreadsheetIds.products, values);
-      return row;
-    }
-  } catch (err) {
-    console.error('Sheets sync error:', err.message);
+    if (rowIndex) await svc.updateRow(user.spreadsheetIds.products, rowIndex, values);
+    else return await svc.appendRow(user.spreadsheetIds.products, values);
+  });
+}
+
+/* ── Excel sync ─────────────────────────────────────────────── */
+function syncToExcel(user, product) {
+  if (user.storageType !== 'local_excel' || !user.localPath) return;
+  new ExcelService(user.localPath).upsertProduct(product);
+}
+
+/**
+ * Save an uploaded image buffer to <localPath>/Images/<filename>
+ * Returns the saved file path (string) or null on failure.
+ */
+function saveImageLocally(user, filename, buffer) {
+  try {
+    if (!user.localPath) return null;
+
+    // Use the dedicated Images/ sub-folder (created during storage setup)
+    const imagesDir = path.join(user.localPath, 'Images');
+    fs.mkdirSync(imagesDir, { recursive: true });   // safety: create if missing
+
+    const dest = path.join(imagesDir, filename);
+    fs.writeFileSync(dest, buffer);
+    return dest;
+  } catch (e) {
+    console.error('Image save error:', e.message);
     return null;
   }
 }
 
-// Get all products
+/**
+ * Delete an image file from disk (best-effort, never throws).
+ */
+function deleteImageLocally(imagePath) {
+  if (!imagePath) return;
+  try {
+    // Strip file:// prefix if present
+    const filePath = imagePath.startsWith('file://') ? imagePath.slice(7) : imagePath;
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch (e) {
+    console.error('Image delete error:', e.message);
+  }
+}
+
+/* ── Routes ─────────────────────────────────────────────────── */
+
+// GET /api/products
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { page = 1, limit = 20, category, search } = req.query;
+    const { page = 1, limit = 20, category, status, search } = req.query;
     const query = { userId: req.user._id };
     if (category) query.category = category;
+    if (status) query.status = status;
     if (search) query.$or = [
       { name: { $regex: search, $options: 'i' } },
-      { productId: { $regex: search, $options: 'i' } }
+      { productId: { $regex: search, $options: 'i' } },
+      { sku: { $regex: search, $options: 'i' } },
     ];
-
     const total = await Product.countDocuments(query);
     const products = await Product.find(query)
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit));
-
     res.json({ success: true, products, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// Get stats
+// GET /api/products/stats/summary
 router.get('/stats/summary', authMiddleware, async (req, res) => {
   try {
-    const total = await Product.countDocuments({ userId: req.user._id });
-    const lowStock = await Product.countDocuments({ userId: req.user._id, stockQty: { $lte: 5 } });
-    const categories = await Product.distinct('category', { userId: req.user._id });
-    const totalValue = await Product.aggregate([
-      { $match: { userId: req.user._id } },
-      { $group: { _id: null, total: { $sum: { $multiply: ['$price', '$stockQty'] } } } }
+    const [total, lowStock, categories, totalValue] = await Promise.all([
+      Product.countDocuments({ userId: req.user._id }),
+      Product.countDocuments({ userId: req.user._id, stockQty: { $lte: 5 } }),
+      Product.distinct('category', { userId: req.user._id }),
+      Product.aggregate([
+        { $match: { userId: req.user._id } },
+        { $group: { _id: null, total: { $sum: { $multiply: ['$price', '$stockQty'] } } } },
+      ]),
     ]);
     res.json({ success: true, total, lowStock, categories: categories.length, totalValue: totalValue[0]?.total || 0 });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// Get single product
+// GET /api/products/:id
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const product = await Product.findOne({ _id: req.params.id, userId: req.user._id });
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
     res.json({ success: true, product });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// Create product
-router.post('/', authMiddleware, async (req, res) => {
+// POST /api/products
+router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
   try {
-    const { name, category, size, color, price, stockQty, imageLink } = req.body;
+    const { name, category, price } = req.body;
     if (!name || !category || !price) {
       return res.status(400).json({ success: false, message: 'Name, category, and price are required' });
     }
 
-    const product = new Product({ userId: req.user._id, name, category, size, color, price, stockQty: stockQty || 0, imageLink });
+    const product = new Product({ userId: req.user._id, ...req.body });
+
+    // Handle image upload
+    if (req.file) {
+      const filename = `${Date.now()}_${req.file.originalname.replace(/\s/g, '_')}`;
+
+      if (req.user.storageType === 'local_excel' && req.user.localPath) {
+        // Local mode → save to <workspace>/Images/
+        const localPath = saveImageLocally(req.user, filename, req.file.buffer);
+        if (localPath) {
+          product.imageLink = `file://${localPath}`;
+          product.imageThumbnailUrl = `file://${localPath}`;
+        }
+      }
+      // Google Drive image upload is handled client-side (Drive API);
+      // the imageLink / imageViewUrl fields come in via req.body in that flow.
+    }
+
     await product.save();
-
-    const rowIndex = await syncToSheets(req.user, product);
-    if (rowIndex) { product.sheetRowIndex = rowIndex; await product.save(); }
-
-    res.status(201).json({ success: true, product, message: 'Product created and synced to Google Sheets!' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+    syncToSheets(req.user, product);
+    syncToExcel(req.user, product);
+    res.status(201).json({ success: true, product });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// Update product
-router.put('/:id', authMiddleware, async (req, res) => {
+// PUT /api/products/:id
+router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
   try {
     const product = await Product.findOne({ _id: req.params.id, userId: req.user._id });
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
 
+    // If a new image is uploaded and there was an old local image, delete it
+    if (req.file && product.imageLink && product.imageLink.startsWith('file://')) {
+      deleteImageLocally(product.imageLink);
+    }
+
     Object.assign(product, req.body);
+
+    if (req.file) {
+      const filename = `${Date.now()}_${req.file.originalname.replace(/\s/g, '_')}`;
+
+      if (req.user.storageType === 'local_excel' && req.user.localPath) {
+        const localPath = saveImageLocally(req.user, filename, req.file.buffer);
+        if (localPath) {
+          product.imageLink = `file://${localPath}`;
+          product.imageThumbnailUrl = `file://${localPath}`;
+        }
+      }
+    }
+
+    // Handle image removal (frontend sends removeImage: 'true')
+    if (req.body.removeImage === 'true') {
+      if (product.imageLink && product.imageLink.startsWith('file://')) {
+        deleteImageLocally(product.imageLink);
+      }
+      product.imageLink = '';
+      product.imageViewUrl = '';
+      product.imageThumbnailUrl = '';
+      product.imageDriveFileId = '';
+    }
+
     await product.save();
-
-    if (product.sheetRowIndex) await syncToSheets(req.user, product, product.sheetRowIndex);
-
-    res.json({ success: true, product, message: 'Product updated and synced!' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+    syncToSheets(req.user, product, product.sheetRowIndex);
+    syncToExcel(req.user, product);
+    res.json({ success: true, product });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// Delete product
+// DELETE /api/products/:id
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const product = await Product.findOne({ _id: req.params.id, userId: req.user._id });
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
 
+    // Delete local image if it exists
+    if (product.imageLink && product.imageLink.startsWith('file://')) {
+      deleteImageLocally(product.imageLink);
+    }
+
+    // Remove from Google Sheets
     if (product.sheetRowIndex && req.user.driveConnected) {
-      try {
-        const service = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
-        await service.deleteRow(req.user.spreadsheetIds.products, product.sheetRowIndex);
-      } catch (e) { console.error('Sheet delete error:', e.message); }
+      syncAsync(async () => {
+        const svc = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
+        await svc.deleteRow(req.user.spreadsheetIds.products, product.sheetRowIndex);
+      });
     }
 
     await product.deleteOne();
     res.json({ success: true, message: 'Product deleted' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// Get stats
-router.get('/stats/summary', authMiddleware, async (req, res) => {
-  try {
-    const total = await Product.countDocuments({ userId: req.user._id });
-    const lowStock = await Product.countDocuments({ userId: req.user._id, stockQty: { $lte: 5 } });
-    const categories = await Product.distinct('category', { userId: req.user._id });
-    const totalValue = await Product.aggregate([
-      { $match: { userId: req.user._id } },
-      { $group: { _id: null, total: { $sum: { $multiply: ['$price', '$stockQty'] } } } }
-    ]);
-    res.json({ success: true, total, lowStock, categories: categories.length, totalValue: totalValue[0]?.total || 0 });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 module.exports = router;

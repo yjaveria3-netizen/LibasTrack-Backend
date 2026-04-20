@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const counterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
-const Counter = mongoose.model('CounterFin', counterSchema);
+const Counter = mongoose.models.CounterFin || mongoose.model('CounterFin', counterSchema);
 
 const financialSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -34,4 +34,4 @@ financialSchema.pre('save', async function(next) {
   next();
 });
 
-module.exports = mongoose.model('Financial', financialSchema);
+module.exports = mongoose.models.Financial || mongoose.model('Financial', financialSchema);
