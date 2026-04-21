@@ -24,7 +24,8 @@ const upload = multer({
 function syncToSheets(user, product, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.products) return;
   syncAsync(async () => {
-    const svc = new GoogleSheetsService(user.accessToken, user.refreshToken);
+    const { accessToken, refreshToken } = user.getDecryptedTokens();
+    const svc = new GoogleSheetsService(accessToken, refreshToken);
     const values = [
       product.productId, product.name, product.category, product.subcategory || '',
       product.collection || '', product.season || '', product.fabric || '',
@@ -259,7 +260,8 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     // Remove from Google Sheets
     if (product.sheetRowIndex && req.user.driveConnected) {
       syncAsync(async () => {
-        const svc = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
+        const { accessToken, refreshToken } = req.user.getDecryptedTokens();
+        const svc = new GoogleSheetsService(accessToken, refreshToken);
         await svc.deleteRow(req.user.spreadsheetIds.products, product.sheetRowIndex);
       });
     }

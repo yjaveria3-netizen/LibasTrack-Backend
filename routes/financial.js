@@ -9,7 +9,8 @@ const ExcelService = require('../services/excelService');
 function syncToSheets(user, txn, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.financial) return;
   syncAsync(async () => {
-    const svc = new GoogleSheetsService(user.accessToken, user.refreshToken);
+    const { accessToken, refreshToken } = user.getDecryptedTokens();
+    const svc = new GoogleSheetsService(accessToken, refreshToken);
     const values = [
       txn.transactionId, txn.orderId, txn.customerId || '', txn.customerName || '',
       txn.orderStatus || '', txn.orderTotal || 0, txn.price, txn.paymentMethod,
@@ -103,7 +104,8 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     if (!txn) return res.status(404).json({ success: false, message: 'Transaction not found' });
     if (txn.sheetRowIndex && req.user.driveConnected) {
       syncAsync(async () => {
-        const svc = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
+        const { accessToken, refreshToken } = req.user.getDecryptedTokens();
+        const svc = new GoogleSheetsService(accessToken, refreshToken);
         await svc.deleteRow(req.user.spreadsheetIds.financial, txn.sheetRowIndex);
       });
     }

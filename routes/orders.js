@@ -10,7 +10,8 @@ const PDFDocument = require('pdfkit');
 function syncToSheets(user, order, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.orders) return;
   syncAsync(async () => {
-    const svc = new GoogleSheetsService(user.accessToken, user.refreshToken);
+    const { accessToken, refreshToken } = user.getDecryptedTokens();
+    const svc = new GoogleSheetsService(accessToken, refreshToken);
     const values = [
       order.orderId, order.customerId, order.customerName || '', order.customerPhone || '',
       order.subtotal, order.discountAmount || 0, order.shippingCost || 0, order.taxAmount || 0,
@@ -309,7 +310,8 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     const customerId = order.customerId;
     if (order.sheetRowIndex && req.user.driveConnected) {
       syncAsync(async () => {
-        const svc = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
+        const { accessToken, refreshToken } = req.user.getDecryptedTokens();
+        const svc = new GoogleSheetsService(accessToken, refreshToken);
         await svc.deleteRow(req.user.spreadsheetIds.orders, order.sheetRowIndex);
       });
     }

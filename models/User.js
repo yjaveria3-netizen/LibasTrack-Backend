@@ -80,4 +80,12 @@ userSchema.virtual('decryptedRefreshToken').get(function() {
   return this.refreshToken ? decrypt(this.refreshToken) : null;
 });
 
+// Helper method to get decrypted tokens safely
+userSchema.methods.getDecryptedTokens = function() {
+  return {
+    accessToken: this.accessToken ? decrypt(this.accessToken) : null,
+    refreshToken: this.refreshToken ? decrypt(this.refreshToken) : null
+  };
+};
+
 module.exports = mongoose.models.User || mongoose.model('User', userSchema);

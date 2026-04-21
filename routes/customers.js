@@ -9,7 +9,8 @@ const ExcelService = require('../services/excelService');
 function syncToSheets(user, customer, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.customers) return;
   syncAsync(async () => {
-    const svc = new GoogleSheetsService(user.accessToken, user.refreshToken);
+    const { accessToken, refreshToken } = user.getDecryptedTokens();
+    const svc = new GoogleSheetsService(accessToken, refreshToken);
     const values = [
       customer.customerId, customer.fullName, customer.email || '',
       customer.phone || '', customer.whatsapp || '', customer.city || '',
@@ -107,7 +108,8 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
     if (customer.sheetRowIndex && req.user.driveConnected) {
       syncAsync(async () => {
-        const svc = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
+        const { accessToken, refreshToken } = req.user.getDecryptedTokens();
+        const svc = new GoogleSheetsService(accessToken, refreshToken);
         await svc.deleteRow(req.user.spreadsheetIds.customers, customer.sheetRowIndex);
       });
     }

@@ -8,7 +8,8 @@ const ExcelService = require('../services/excelService');
 function syncToSheets(user, col, rowIndex = null) {
     if (!user.driveConnected || !user.spreadsheetIds?.collections) return null;
     syncAsync(async () => {
-        const svc = new GoogleSheetsService(user.accessToken, user.refreshToken);
+        const { accessToken, refreshToken } = user.getDecryptedTokens();
+        const svc = new GoogleSheetsService(accessToken, refreshToken);
         const values = [
             col.collectionId, col.name, col.description || '', col.season || '',
             col.year || '', col.theme || '', col.status,

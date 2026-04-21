@@ -15,7 +15,8 @@ router.post('/connect', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Drive name and link are required' });
     }
 
-    const sheetsService = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
+    const { accessToken, refreshToken } = req.user.getDecryptedTokens();
+    const sheetsService = new GoogleSheetsService(accessToken, refreshToken);
     const folderId = await sheetsService.getFolderIdFromLink(driveLink);
 
     if (!folderId) {
@@ -92,7 +93,8 @@ router.post('/connect-existing', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Drive name and link are required' });
     }
 
-    const sheetsService = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
+    const { accessToken, refreshToken } = req.user.getDecryptedTokens();
+    const sheetsService = new GoogleSheetsService(accessToken, refreshToken);
     const folderId = await sheetsService.getFolderIdFromLink(driveLink);
 
     if (!folderId) {

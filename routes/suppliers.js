@@ -8,7 +8,8 @@ const ExcelService = require('../services/excelService');
 function syncToSheets(user, s, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.suppliers) return;
   syncAsync(async () => {
-    const svc = new GoogleSheetsService(user.accessToken, user.refreshToken);
+    const { accessToken, refreshToken } = user.getDecryptedTokens();
+    const svc = new GoogleSheetsService(accessToken, refreshToken);
     const values = [
       s.supplierId, s.name, s.contactPerson || '', s.email || '', s.phone || '',
       s.whatsapp || '', s.city || '', s.country || '', s.category || '',
@@ -82,7 +83,8 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     if (!supplier) return res.status(404).json({ success: false, message: 'Supplier not found' });
     if (supplier.sheetRowIndex && req.user.driveConnected) {
       syncAsync(async () => {
-        const svc = new GoogleSheetsService(req.user.accessToken, req.user.refreshToken);
+        const { accessToken, refreshToken } = req.user.getDecryptedTokens();
+        const svc = new GoogleSheetsService(accessToken, refreshToken);
         await svc.deleteRow(req.user.spreadsheetIds.suppliers, supplier.sheetRowIndex);
       });
     }
