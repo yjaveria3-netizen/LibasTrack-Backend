@@ -95,13 +95,16 @@ router.get('/', authMiddleware, async (req, res) => {
     const { page = 1, limit = 20, status, search } = req.query;
     const query = { userId: req.user._id };
     if (status) query.status = status;
-    if (search) query.$or = [
-      { orderId: { $regex: search, $options: 'i' } },
-      { customerId: { $regex: search, $options: 'i' } },
-      { customerName: { $regex: search, $options: 'i' } },
-    ];
+    if (search) {
+      const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { orderId: { $regex: escapedSearch, $options: 'i' } },
+        { customerId: { $regex: escapedSearch, $options: 'i' } },
+        { customerName: { $regex: escapedSearch, $options: 'i' } },
+      ];
+    }
     const total = await Order.countDocuments(query);
-    const orders = await Order.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(parseInt(limit));
+    const orders = await Order.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(Math.min(parseInt(limit), 100));
     res.json({ success: true, orders, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });

@@ -1,11 +1,17 @@
 const crypto = require('crypto');
 
 // AES-256 encryption/decryption for sensitive tokens
-// Note: Use ENCRYPTION_SECRET env var in production (32+ chars)
-const secretKey = process.env.ENCRYPTION_SECRET || 'default-dev-secret-key-change-in-production';
-if (secretKey === 'default-dev-secret-key-change-in-production' && process.env.NODE_ENV === 'production') {
-  console.warn('⚠️  CRITICAL: ENCRYPTION_SECRET not set in production!');
-  console.warn('   Set ENCRYPTION_SECRET in .env to a 32+ character string');
+// ENCRYPTION_SECRET must be set - do not use defaults in any environment
+const secretKey = process.env.ENCRYPTION_SECRET;
+if (!secretKey) {
+  console.error('❌ FATAL: ENCRYPTION_SECRET environment variable not set!');
+  console.error('   Set ENCRYPTION_SECRET in .env to a 32+ character random string');
+  console.error('   Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+  process.exit(1);
+}
+if (secretKey.length < 32) {
+  console.error('❌ FATAL: ENCRYPTION_SECRET must be at least 32 characters long');
+  process.exit(1);
 }
 
 const ENCRYPTION_KEY = crypto.scryptSync(secretKey, 'salt', 32);

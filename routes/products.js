@@ -24,7 +24,12 @@ const upload = multer({
 function syncToSheets(user, product, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.products) return;
   syncAsync(async () => {
-    const { accessToken, refreshToken } = user.getDecryptedTokens();
+    const tokens = user.getDecryptedTokens();
+    if (!tokens) {
+      console.error('Failed to decrypt tokens for Google Sheets sync');
+      return;
+    }
+    const { accessToken, refreshToken } = tokens;
     const svc = new GoogleSheetsService(accessToken, refreshToken);
     const values = [
       product.productId, product.name, product.category, product.subcategory || '',
@@ -81,6 +86,12 @@ function deleteImageLocally(imagePath) {
   }
 }
 
+// Helper function to escape regex special characters and prevent ReDoS attacks
+function escapeRegex(str) {
+  if (!str) return '';
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function normalizeProductPayload(body = {}) {
   const payload = { ...body };
 
@@ -115,11 +126,14 @@ router.get('/', authMiddleware, async (req, res) => {
     const query = { userId: req.user._id };
     if (category) query.category = category;
     if (status) query.status = status;
-    if (search) query.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { productId: { $regex: search, $options: 'i' } },
-      { sku: { $regex: search, $options: 'i' } },
-    ];
+    if (search) {
+      const escapedSearch = escapeRegex(search);
+      query.$or = [
+        { name: { $regex: escapedSearch, $options: 'i' } },
+        { productId: { $regex: escapedSearch, $options: 'i' } },
+        { sku: { $regex: escapedSearch, $options: 'i' } },
+      ];
+    }
     const total = await Product.countDocuments(query);
     const products = await Product.find(query)
       .sort({ createdAt: -1 })
@@ -176,12 +190,35 @@ router.post('/', authMiddleware, upload.single('image'), productCreateValidation
     if (!name || !category || !price) {
       return res.status(400).json({ success: false, message: 'Name, category, and price are required' });
     }
+    
+    // Validate prices are non-negative
+    if (Number(payload.price) < 0) {
+      return res.status(400).json({ success: false, message: 'Price cannot be negative' });
+    }
+    if (payload.salePrice && Number(payload.salePrice) < 0) {
+      return res.status(400).json({ success: false, message: 'Sale price cannot be negative' });
+    }
+    if (payload.costPrice && Number(payload.costPrice) < 0) {
+      return res.status(400).json({ success: false, message: 'Cost price cannot be negative' });
+    }
+    
+    // Validate sale price <= regular price
+    if (payload.salePrice && Number(payload.salePrice) > Number(payload.price)) {
+      return res.status(400).json({ success: false, message: 'Sale price cannot exceed regular price' });
+    }
+    
+    // Validate stock quantity is non-negative
+    if (payload.stockQty && Number(payload.stockQty) < 0) {
+      return res.status(400).json({ success: false, message: 'Stock quantity cannot be negative' });
+    }
 
     const product = new Product({ userId: req.user._id, ...payload });
 
     // Handle image upload
     if (req.file) {
-      const filename = `${Date.now()}_${req.file.originalname.replace(/\s/g, '_')}`;
+      // Sanitize filename to prevent directory traversal attacks
+      const baseName = path.basename(req.file.originalname).replace(/\s/g, '_');
+      const filename = `${Date.now()}_${baseName}`;
 
       if (req.user.storageType === 'local_excel' && req.user.localPath) {
         // Local mode → save to <workspace>/Images/
@@ -217,7 +254,9 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
     Object.assign(product, payload);
 
     if (req.file) {
-      const filename = `${Date.now()}_${req.file.originalname.replace(/\s/g, '_')}`;
+      // Sanitize filename to prevent directory traversal attacks
+      const baseName = path.basename(req.file.originalname).replace(/\s/g, '_');
+      const filename = `${Date.now()}_${baseName}`;
 
       if (req.user.storageType === 'local_excel' && req.user.localPath) {
         const localPath = saveImageLocally(req.user, filename, req.file.buffer);

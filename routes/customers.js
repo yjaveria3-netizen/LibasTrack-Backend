@@ -9,7 +9,12 @@ const ExcelService = require('../services/excelService');
 function syncToSheets(user, customer, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.customers) return;
   syncAsync(async () => {
-    const { accessToken, refreshToken } = user.getDecryptedTokens();
+    const tokens = user.getDecryptedTokens();
+    if (!tokens) {
+      console.error('Failed to decrypt tokens for Google Sheets sync');
+      return;
+    }
+    const { accessToken, refreshToken } = tokens;
     const svc = new GoogleSheetsService(accessToken, refreshToken);
     const values = [
       customer.customerId, customer.fullName, customer.email || '',
@@ -31,17 +36,26 @@ function syncToExcel(user, customer) {
   new ExcelService(user.localPath).upsertCustomer(customer);
 }
 
+// Helper function to escape regex special characters and prevent ReDoS attacks
+function escapeRegex(str) {
+  if (!str) return '';
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const { page = 1, limit = 20, search, segment } = req.query;
     const query = { userId: req.user._id };
     if (segment) query.segment = segment;
-    if (search) query.$or = [
-      { fullName: { $regex: search, $options: 'i' } },
-      { customerId: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } },
-      { phone: { $regex: search, $options: 'i' } },
-    ];
+    if (search) {
+      const escapedSearch = escapeRegex(search);
+      query.$or = [
+        { fullName: { $regex: escapedSearch, $options: 'i' } },
+        { customerId: { $regex: escapedSearch, $options: 'i' } },
+        { email: { $regex: escapedSearch, $options: 'i' } },
+        { phone: { $regex: escapedSearch, $options: 'i' } },
+      ];
+    }
     const total = await Customer.countDocuments(query);
     const customers = await Customer.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(parseInt(limit));
     res.json({ success: true, customers, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });

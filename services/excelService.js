@@ -157,6 +157,23 @@ class ExcelService {
     } catch (e) { console.error('Excel supplier sync error:', e.message); }
   }
 
+  async upsertCollection(col) {
+    try {
+      const wb = await this._loadWorkbook('Collections.xlsx');
+      const ws = wb.getWorksheet('Collections') || wb.addWorksheet('Collections');
+      const values = [
+        col.collectionId, col.name, col.theme || '',
+        col.season || '', col.description || '', col.status || 'Planning',
+        col.launchDate ? new Date(col.launchDate).toLocaleDateString('en-PK') : '',
+        (col.tags || []).join(', '), col.notes || '',
+      ];
+      const existing = this._findRow(ws, 1, col.collectionId);
+      if (existing) { ws.getRow(existing).values = ['', ...values]; }
+      else { ws.addRow(values); }
+      await this._save(wb, 'Collections.xlsx');
+    } catch (e) { console.error('Excel collection sync error:', e.message); }
+  }
+
   async deleteRow(filename, sheetName, colIndex, idValue) {
     try {
       const wb = await this._loadWorkbook(filename);

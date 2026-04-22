@@ -94,11 +94,10 @@ router.get('/google/callback', async (req, res) => {
       maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
     });
     
-    // ALSO include token in redirect URL as backup
-    // Frontend should prefer cookie, but can use URL param if cookie not available
+    // Do NOT include token in URL - httpOnly cookie is the secure mechanism
+    // Frontend must use credentials: 'include' in fetch calls to access the cookie
     const redirectUrl = `${process.env.FRONTEND_URL}/auth/callback` +
-      `?token=${jwtToken}` +  // Backup: include in URL
-      `&needsOnboarding=${needsOnboarding}` +
+      `?needsOnboarding=${needsOnboarding}` +
       `&needsStorageSetup=${needsStorageSetup}`;
     
     logger.info('OAuth Callback Success', { userId: user._id, isNewUser, redirectUrl });

@@ -16,11 +16,9 @@ const authMiddleware = async (req, res, next) => {
       token = req.cookies.token;
     }
     
-    // Priority 3: Query parameter (fallback for auth callback redirect)
-    // This is used when frontend first loads after OAuth callback
-    if (!token && req.query && req.query.token) {
-      token = req.query.token;
-    }
+    // REMOVED: Query parameter fallback for security
+    // Tokens must NEVER be passed in URLs - they can be logged, leaked via Referer headers, or stored in browser history
+    // Frontend must use credentials: 'include' in fetch calls to access httpOnly cookies
     
     if (!token) {
       return res.status(401).json({ success: false, message: 'No token provided' });

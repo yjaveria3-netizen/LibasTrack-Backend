@@ -9,7 +9,12 @@ const ExcelService = require('../services/excelService');
 function syncToSheets(user, txn, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.financial) return;
   syncAsync(async () => {
-    const { accessToken, refreshToken } = user.getDecryptedTokens();
+    const tokens = user.getDecryptedTokens();
+    if (!tokens) {
+      console.error('Failed to decrypt tokens for Google Sheets sync');
+      return;
+    }
+    const { accessToken, refreshToken } = tokens;
     const svc = new GoogleSheetsService(accessToken, refreshToken);
     const values = [
       txn.transactionId, txn.orderId, txn.customerId || '', txn.customerName || '',
@@ -40,15 +45,24 @@ async function populateFinancialRelations(userId, payload) {
   return payload;
 }
 
+// Helper function to escape regex special characters
+function escapeRegex(str) {
+  if (!str) return '';
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const { page = 1, limit = 20, paymentStatus, search } = req.query;
     const query = { userId: req.user._id };
     if (paymentStatus) query.paymentStatus = paymentStatus;
-    if (search) query.$or = [
-      { transactionId: { $regex: search, $options: 'i' } },
-      { orderId: { $regex: search, $options: 'i' } },
-    ];
+    if (search) {
+      const escapedSearch = escapeRegex(search);
+      query.$or = [
+        { transactionId: { $regex: escapedSearch, $options: 'i' } },
+        { orderId: { $regex: escapedSearch, $options: 'i' } },
+      ];
+    }
     const total = await Financial.countDocuments(query);
     const transactions = await Financial.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(parseInt(limit));
     res.json({ success: true, transactions, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
@@ -73,6 +87,11 @@ router.post('/', authMiddleware, async (req, res) => {
     const { orderId, price, paymentMethod } = payload;
     if (!orderId || !price || !paymentMethod) {
       return res.status(400).json({ success: false, message: 'Order ID, price, and payment method are required' });
+    }
+    
+    // Validate price is positive
+    if (Number(price) < 0) {
+      return res.status(400).json({ success: false, message: 'Price cannot be negative' });
     }
 
     await populateFinancialRelations(req.user._id, payload);

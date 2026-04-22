@@ -15,7 +15,11 @@ router.post('/connect', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Drive name and link are required' });
     }
 
-    const { accessToken, refreshToken } = req.user.getDecryptedTokens();
+    const tokens = req.user.getDecryptedTokens();
+    if (!tokens) {
+      return res.status(500).json({ success: false, message: 'Failed to decrypt authentication tokens' });
+    }
+    const { accessToken, refreshToken } = tokens;
     const sheetsService = new GoogleSheetsService(accessToken, refreshToken);
     const folderId = await sheetsService.getFolderIdFromLink(driveLink);
 
@@ -93,7 +97,11 @@ router.post('/connect-existing', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Drive name and link are required' });
     }
 
-    const { accessToken, refreshToken } = req.user.getDecryptedTokens();
+    const tokens = req.user.getDecryptedTokens();
+    if (!tokens) {
+      return res.status(500).json({ success: false, message: 'Failed to decrypt authentication tokens' });
+    }
+    const { accessToken, refreshToken } = tokens;
     const sheetsService = new GoogleSheetsService(accessToken, refreshToken);
     const folderId = await sheetsService.getFolderIdFromLink(driveLink);
 

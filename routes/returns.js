@@ -9,7 +9,12 @@ const ExcelService = require('../services/excelService');
 function syncToSheets(user, ret, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.returns) return;
   syncAsync(async () => {
-    const { accessToken, refreshToken } = user.getDecryptedTokens();
+    const tokens = user.getDecryptedTokens();
+    if (!tokens) {
+      console.error('Failed to decrypt tokens for Google Sheets sync');
+      return;
+    }
+    const { accessToken, refreshToken } = tokens;
     const svc = new GoogleSheetsService(accessToken, refreshToken);
     const values = [
       ret.returnId, ret.orderId, ret.customerId || '', ret.customerName || '',
@@ -46,22 +51,40 @@ async function populateReturnRelations(userId, payload) {
   return payload;
 }
 
+// Helper function to escape regex special characters
+function escapeRegex(str) {
+  if (!str) return '';
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const { page=1, limit=15, search, status, type } = req.query;
     const query = { userId: req.user._id };
     if (status) query.status = status;
     if (type) query.type = type;
-    if (search) query.$or = [
-      { orderId: { $regex: search, $options:'i' } },
-      { customerId: { $regex: search, $options:'i' } },
-      { customerName: { $regex: search, $options:'i' } },
-      { returnId: { $regex: search, $options:'i' } },
-    ];
+    if (search) {
+      const escapedSearch = escapeRegex(search);
+      query.$or = [
+        { orderId: { $regex: escapedSearch, $options:'i' } },
+        { customerId: { $regex: escapedSearch, $options:'i' } },
+        { customerName: { $regex: escapedSearch, $options:'i' } },
+        { returnId: { $regex: escapedSearch, $options:'i' } },
+      ];
+    }
     const total = await Return.countDocuments(query);
     const returns = await Return.find(query).sort({ createdAt:-1 }).skip((page-1)*limit).limit(parseInt(limit));
     res.json({ success:true, returns, total, page:parseInt(page), totalPages:Math.ceil(total/limit) });
   } catch(err) { res.status(500).json({ success:false, message:err.message }); }
+});
+
+// GET /api/returns/:id
+router.get('/:id', authMiddleware, async (req, res) => {
+  try {
+    const ret = await Return.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!ret) return res.status(404).json({ success: false, message: 'Return not found' });
+    res.json({ success: true, return: ret });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 router.get('/stats/summary', authMiddleware, async (req, res) => {

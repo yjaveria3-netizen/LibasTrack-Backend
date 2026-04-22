@@ -28,16 +28,25 @@ function syncToExcel(user, col) {
     svc.upsertCollection && svc.upsertCollection(col).catch(() => { });
 }
 
+// Helper function to escape regex special characters
+function escapeRegex(str) {
+  if (!str) return '';
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 router.get('/', authMiddleware, async (req, res) => {
     try {
         const { page = 1, limit = 20, status, search } = req.query;
         const query = { userId: req.user._id };
         if (status) query.status = status;
-        if (search) query.$or = [
-            { name: { $regex: search, $options: 'i' } },
-            { collectionId: { $regex: search, $options: 'i' } },
-            { theme: { $regex: search, $options: 'i' } },
-        ];
+        if (search) {
+            const escapedSearch = escapeRegex(search);
+            query.$or = [
+                { name: { $regex: escapedSearch, $options: 'i' } },
+                { collectionId: { $regex: escapedSearch, $options: 'i' } },
+                { theme: { $regex: escapedSearch, $options: 'i' } },
+            ];
+        }
         const total = await BrandCollection.countDocuments(query);
         const collections = await BrandCollection.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(parseInt(limit));
         res.json({ success: true, collections, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });

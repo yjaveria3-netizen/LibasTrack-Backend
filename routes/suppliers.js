@@ -8,7 +8,12 @@ const ExcelService = require('../services/excelService');
 function syncToSheets(user, s, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.suppliers) return;
   syncAsync(async () => {
-    const { accessToken, refreshToken } = user.getDecryptedTokens();
+    const tokens = user.getDecryptedTokens();
+    if (!tokens) {
+      console.error('Failed to decrypt tokens for Google Sheets sync');
+      return;
+    }
+    const { accessToken, refreshToken } = tokens;
     const svc = new GoogleSheetsService(accessToken, refreshToken);
     const values = [
       s.supplierId, s.name, s.contactPerson || '', s.email || '', s.phone || '',
@@ -27,16 +32,25 @@ function syncToExcel(user, supplier) {
   new ExcelService(user.localPath).upsertSupplier(supplier);
 }
 
+// Helper function to escape regex special characters
+function escapeRegex(str) {
+  if (!str) return '';
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const { page = 1, limit = 20, search, category } = req.query;
     const query = { userId: req.user._id };
     if (category) query.category = category;
-    if (search) query.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { supplierId: { $regex: search, $options: 'i' } },
-      { contactPerson: { $regex: search, $options: 'i' } },
-    ];
+    if (search) {
+      const escapedSearch = escapeRegex(search);
+      query.$or = [
+        { name: { $regex: escapedSearch, $options: 'i' } },
+        { supplierId: { $regex: escapedSearch, $options: 'i' } },
+        { contactPerson: { $regex: escapedSearch, $options: 'i' } },
+      ];
+    }
     const total = await Supplier.countDocuments(query);
     const suppliers = await Supplier.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(parseInt(limit));
     res.json({ success: true, suppliers, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
@@ -83,7 +97,12 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     if (!supplier) return res.status(404).json({ success: false, message: 'Supplier not found' });
     if (supplier.sheetRowIndex && req.user.driveConnected) {
       syncAsync(async () => {
-        const { accessToken, refreshToken } = req.user.getDecryptedTokens();
+        const tokens = req.user.getDecryptedTokens();
+        if (!tokens) {
+          console.error('Failed to decrypt tokens for sheet deletion');
+          return;
+        }
+        const { accessToken, refreshToken } = tokens;
         const svc = new GoogleSheetsService(accessToken, refreshToken);
         await svc.deleteRow(req.user.spreadsheetIds.suppliers, supplier.sheetRowIndex);
       });
