@@ -110,7 +110,7 @@ router.get('/google/callback', async (req, res) => {
     });
     // Redirect with error message
     const errorMsg = encodeURIComponent(err.message || 'oauth_failed');
-    res.redirect(`${process.env.FRONTEND_URL}/login?error=${errorMsg}`);
+    res.redirect(`${'https://www.libastrack.live'}/login?error=${errorMsg}`);
   }
 });
 
