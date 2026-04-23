@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
+
 const logger = require('./middleware/logger');
 const sanitizePayload = require('./middleware/sanitizePayload');
 
@@ -14,90 +15,112 @@ let cookieParser;
 try {
   cookieParser = require('cookie-parser');
 } catch (err) {
-  console.warn('⚠️  cookie-parser not installed. Installing critical dependencies...');
-  console.warn('    Run: npm install cookie-parser winston');
-  // Simple fallback parser that does nothing
+  console.warn('⚠️ cookie-parser not installed. Run: npm install cookie-parser');
   cookieParser = () => (req, res, next) => next();
 }
 
 const app = express();
 
-// Prevent conditional 304 responses for API JSON payloads (especially auth state).
+// Disable ETag (avoid caching issues in auth)
 app.set('etag', false);
 
-// Create logs directory if it doesn't exist
+// ─────────────────────────────────────────────────────
+// 📁 Logs directory
+// ─────────────────────────────────────────────────────
 const logsDir = path.join(__dirname, 'logs');
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
 
-// ── Security & middleware ─────────────────────────────
+// ─────────────────────────────────────────────────────
+// 🛡️ Security + Middleware
+// ─────────────────────────────────────────────────────
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-app.use(cors({
- origin: [
+
+// ✅ FIXED CORS (important)
+const allowedOrigins = [
   'https://www.libastrack.live',
   'http://localhost:3000',
   'http://localhost:5000',
-].filter(Boolean),
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true); // allow Postman, curl
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.log('❌ CORS BLOCKED:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 }));
+
+// ✅ Preflight support (VERY IMPORTANT)
+app.options('*', cors());
+
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 app.use(sanitizePayload);
 app.use(cookieParser());
 app.use(morgan('dev'));
 
-// Rate limiters with different strictness levels
+// ─────────────────────────────────────────────────────
+// 🚫 Rate Limiting
+// ─────────────────────────────────────────────────────
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,  // 15 minutes
-  max: 10,                     // 10 requests per window (stricter for auth)
+  windowMs: 15 * 60 * 1000,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: 'Too many authentication attempts, please try again later',
+  message: 'Too many authentication attempts, try later',
 });
 
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,  // 15 minutes
-  max: 200,                    // 200 requests per window (looser for data routes)
+  windowMs: 15 * 60 * 1000,
+  max: 200,
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Apply limiters to specific routes
 app.use('/api/auth/google', authLimiter);
 app.use('/api/auth/google/callback', authLimiter);
 app.use('/api/', apiLimiter);
 
-// ── Diagnostic Logging ────────────────────────────────
+// ─────────────────────────────────────────────────────
+// 🧠 Error Handling (process-level)
+// ─────────────────────────────────────────────────────
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', { reason, promise });
+  logger.error('Unhandled Rejection', { reason });
 });
 
 process.on('uncaughtException', (err) => {
-  logger.error('Uncaught Exception:', err);
+  logger.error('Uncaught Exception', err);
 });
 
-// ── MongoDB ──────────────────────────────────────────
-logger.info('Attempting MongoDB connection...');
+// ─────────────────────────────────────────────────────
+// 🗄️ MongoDB
+// ─────────────────────────────────────────────────────
+logger.info('Connecting to MongoDB...');
+
 mongoose.connect(process.env.MONGODB_URI, {
   serverSelectionTimeoutMS: 5000,
   socketTimeoutMS: 45000,
 })
-  .then(() => {
-    logger.info('✅ MongoDB connected successfully', {
-      dbName: mongoose.connection.name,
-      host: mongoose.connection.host
-    });
-  })
-  .catch(err => {
-    logger.error('❌ MongoDB connection error', {
-      message: err.message,
-      code: err.code
-    });
+.then(() => {
+  logger.info('✅ MongoDB connected', {
+    db: mongoose.connection.name,
   });
+})
+.catch(err => {
+  logger.error('❌ MongoDB connection failed', err);
+});
 
-
-// ── Routes ──────────────────────────────────────────
+// ─────────────────────────────────────────────────────
+// 🚀 Routes
+// ─────────────────────────────────────────────────────
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/orders', require('./routes/orders'));
@@ -110,42 +133,57 @@ app.use('/api/collections', require('./routes/collections'));
 app.use('/api/drive', require('./routes/drive'));
 app.use('/api/storage', require('./routes/storage'));
 
-// ── Health check ─────────────────────────────────────
+// ─────────────────────────────────────────────────────
+// ❤️ Health Check
+// ─────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    timestamp: new Date().toISOString(),
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    time: new Date().toISOString(),
+    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
   });
 });
 
-// ── 404 handler ──────────────────────────────────────
+// ─────────────────────────────────────────────────────
+// ❌ 404 Handler
+// ─────────────────────────────────────────────────────
 app.use((req, res) => {
-  res.status(404).json({ success: false, message: `Route ${req.method} ${req.path} not found` });
+  res.status(404).json({
+    success: false,
+    message: `Route ${req.method} ${req.path} not found`,
+  });
 });
 
-// ── Global error handler ─────────────────────────────
+// ─────────────────────────────────────────────────────
+// 💥 Global Error Handler
+// ─────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   logger.error('Server error', {
     message: err.message,
-    stack: err.stack,
     url: req.url,
-    method: req.method
   });
-  
-  // Multer file size error
+
   if (err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(400).json({ success: false, message: 'File too large. Maximum is 10MB.' });
+    return res.status(400).json({
+      success: false,
+      message: 'File too large (max 10MB)',
+    });
   }
-  res.status(500).json({ success: false, message: err.message || 'Internal server error' });
+
+  res.status(500).json({
+    success: false,
+    message: err.message || 'Internal server error',
+  });
 });
 
-// ── Start ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────
+// 🚀 Start Server
+// ─────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
+
 app.listen(PORT, () => {
-  logger.info(`🚀 LibasTrack backend running`, {
-    port: PORT,
+  logger.info(`🚀 Server running on port ${PORT}`, {
+    env: process.env.NODE_ENV,
     frontend: process.env.FRONTEND_URL,
-    env: process.env.NODE_ENV || 'development'
   });
 });
