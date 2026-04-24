@@ -37,12 +37,24 @@ if (!fs.existsSync(logsDir)) {
 // ─────────────────────────────────────────────────────
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
-// ✅ FIXED CORS (important)
-const allowedOrigins = [
-  'https://www.libastrack.live',
+const configuredOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URLS,
+  process.env.CORS_ORIGINS,
+]
+  .filter(Boolean)
+  .flatMap((value) => value.split(','))
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([
   'http://localhost:3000',
   'http://localhost:5000',
-];
+  'https://libastrack.com',
+  'https://www.libastrack.com',
+  'https://www.libastrack.live',
+  ...configuredOrigins,
+]));
 
 app.use(cors({
   origin: function (origin, callback) {
