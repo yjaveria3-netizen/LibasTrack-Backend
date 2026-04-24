@@ -16,6 +16,8 @@ const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_REDIRECT_URI
 );
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 // ─────────────────────────────────────────────
 // 🚀 START GOOGLE LOGIN (FIXED)
 // ─────────────────────────────────────────────
@@ -94,8 +96,8 @@ router.get('/google/callback', async (req, res) => {
     // Set cookie
     res.cookie('token', jwtToken, {
       httpOnly: true,
-      secure: true, // always true in production
-      sameSite: 'lax',
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000
     });
 
@@ -145,7 +147,11 @@ router.put('/brand', authMiddleware, brandUpdateValidation, async (req, res) => 
 // 🚪 LOGOUT
 // ─────────────────────────────────────────────
 router.post('/logout', authMiddleware, (req, res) => {
-  res.clearCookie('token');
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax'
+  });
   res.json({ success: true });
 });
 
