@@ -138,4 +138,163 @@ class GoogleSheetsService {
     });
   }
 
-  async deleteRow(spreadsheetId,
+  async deleteRow(spreadsheetId, rowIndex) {
+    if (!spreadsheetId || !rowIndex) return;
+    await this.ensureValidToken();
+    const { data } = await this.sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
+    const sheetId = data.sheets?.[0]?.properties?.sheetId || 0;
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      resource: {
+        requests: [{
+          deleteDimension: {
+            range: { sheetId, dimension: 'ROWS', startIndex: rowIndex - 1, endIndex: rowIndex },
+          },
+        }],
+      },
+    });
+  }
+
+  async getFolderIdFromLink(folderLink) {
+    const match = folderLink.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    return match ? match[1] : null;
+  }
+
+  async findOrCreateSubfolder(parentId, folderName) {
+    const { data } = await this.drive.files.list({
+      q: `'${parentId}' in parents and name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      fields: 'files(id,name)',
+    });
+    if (data.files?.length > 0) return data.files[0].id;
+    const { data: created } = await this.drive.files.create({
+      resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
+      fields: 'id',
+    });
+    return created.id;
+  }
+
+  async listFilesInFolder(folderId) {
+    const { data } = await this.drive.files.list({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: 'files(id, name, mimeType)',
+    });
+    return data.files || [];
+  }
+
+  async getSheetValues(spreadsheetId, range = 'A2:Z') {
+    await this.ensureValidToken();
+    const { data } = await this.sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range,
+    });
+    return data.values || [];
+  }
+
+  async getExcelValues(fileId) {
+    try {
+      await this.ensureValidToken();
+      const response = await this.drive.files.get(
+        { fileId, alt: 'media' },
+        { responseType: 'arraybuffer' }
+      );
+
+      const buffer = Buffer.from(response.data);
+      const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+
+      const wsName = wb.SheetNames[0];
+      if (!wsName) return [];
+
+      const ws = wb.Sheets[wsName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      // Skip header row to match getSheetValues(A2:Z) behaviour
+      return rows.length > 0 ? rows.slice(1) : [];
+    } catch (err) {
+      console.error('Error parsing .xlsx from drive:', err);
+      return [];
+    }
+  }
+
+  parseRowToModel(row, type) {
+    if (!row || row.length === 0) return null;
+    const headers = SPREADSHEET_HEADERS[type];
+    if (!headers) return null;
+
+    const data = {};
+    const map = {
+      products: {
+        'Product ID': 'productId', 'Name': 'name', 'Category': 'category', 'Subcategory': 'subcategory',
+        'Collection': 'collection', 'Season': 'season', 'Fabric': 'fabric', 'Cost Price': 'costPrice',
+        'Price': 'price', 'Sale Price': 'salePrice', 'Currency': 'currency', 'SKU': 'sku',
+        'Stock Qty': 'stockQty', 'Status': 'status', 'Tags': 'tags', 'Image Link': 'imageLink'
+      },
+      orders: {
+        'Order ID': 'orderId', 'Customer ID': 'customerId', 'Customer Name': 'customerName',
+        'Phone': 'customerPhone', 'Subtotal': 'subtotal', 'Discount': 'discountAmount',
+        'Shipping': 'shippingCost', 'Tax': 'taxAmount', 'Total': 'total', 'Currency': 'currency',
+        'Status': 'status', 'Channel': 'channel', 'Priority': 'priority', 'Shipping Method': 'shippingMethod',
+        'Courier': 'courierName', 'Tracking #': 'trackingNumber', 'Address': 'shippingAddress',
+        'Est. Delivery': 'estimatedDelivery', 'Notes': 'notes', 'Order Date': 'orderDate'
+      },
+      customers: {
+        'Customer ID': 'customerId', 'Full Name': 'fullName', 'Email': 'email', 'Phone': 'phone',
+        'WhatsApp': 'whatsapp', 'City': 'city', 'Country': 'country', 'Address': 'address',
+        'Gender': 'gender', 'Segment': 'segment', 'Source': 'source', 'Total Spent': 'totalSpent',
+        'Total Orders': 'totalOrders', 'Loyalty Points': 'loyaltyPoints', 'Date Joined': 'dateJoined',
+        'Subscribed': 'subscribed', 'Tags': 'tags', 'Notes': 'notes'
+      },
+      financial: {
+        'Transaction ID': 'transactionId', 'Order ID': 'orderId', 'Customer ID': 'customerId',
+        'Customer Name': 'customerName', 'Order Status': 'orderStatus', 'Order Total': 'orderTotal', 'Amount': 'price',
+        'Payment Method': 'paymentMethod', 'Payment Status': 'paymentStatus', 'Transaction Date': 'transactionDate'
+      },
+      suppliers: {
+        'Supplier ID': 'supplierId', 'Name': 'name', 'Contact Person': 'contactPerson',
+        'Email': 'email', 'Phone': 'phone', 'WhatsApp': 'whatsapp', 'City': 'city',
+        'Country': 'country', 'Category': 'category', 'Materials': 'materials',
+        'Rating': 'rating', 'Lead Time (Days)': 'leadTime', 'Min Order': 'minOrder',
+        'Payment Terms': 'paymentTerms', 'Active': 'active', 'Total Purchased': 'totalPurchased', 'Notes': 'notes'
+      },
+      collections: {
+        'Collection ID': 'collectionId', 'Name': 'name', 'Description': 'description',
+        'Season': 'season', 'Year': 'year', 'Theme': 'theme', 'Status': 'status',
+        'Launch Date': 'launchDate', 'Product Count': 'productCount', 'Notes': 'notes'
+      },
+      returns: {
+        'Return ID': 'returnId', 'Order ID': 'orderId', 'Customer ID': 'customerId',
+        'Customer Name': 'customerName', 'Product ID': 'productId', 'Product Name': 'productName',
+        'Reason': 'reason', 'Type': 'type', 'Status': 'status',
+        'Refund Amount': 'refundAmount', 'Return Date': 'returnDate', 'Notes': 'notes'
+      }
+    };
+
+    const typeMap = map[type];
+    if (!typeMap) return null;
+
+    headers.forEach((header, i) => {
+      const field = typeMap[header];
+      if (field) {
+        let val = row[i];
+        if (['price', 'costPrice', 'salePrice', 'total', 'subtotal', 'discountAmount', 'shippingCost', 'taxAmount', 'amount', 'orderTotal', 'stockQty', 'totalSpent', 'totalOrders', 'loyaltyPoints', 'rating', 'leadTime', 'minOrder', 'totalPurchased', 'productCount', 'refundAmount'].includes(field)) {
+          val = parseFloat(String(val).replace(/[^0-9.-]+/g, '')) || 0;
+        } else if (['tags', 'materials'].includes(field)) {
+          val = val ? String(val).split(',').map(t => t.trim()) : [];
+        } else if (['active', 'subscribed'].includes(field)) {
+          val = String(val).toLowerCase() === 'true' || String(val) === '1';
+        } else if (field.endsWith('Date') || field.endsWith('Delivery') || field === 'dateJoined') {
+          val = val ? new Date(val) : null;
+          if (val && isNaN(val.getTime())) val = null;
+        }
+        data[field] = val;
+      }
+    });
+
+    return data;
+  }
+}
+
+function syncAsync(fn) {
+  fn().catch(err => console.error('Background sheets sync error:', err.message));
+}
+
+module.exports = { GoogleSheetsService, syncAsync, SPREADSHEET_HEADERS };
