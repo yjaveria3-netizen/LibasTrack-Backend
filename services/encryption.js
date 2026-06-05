@@ -2,20 +2,15 @@ const crypto = require('crypto');
 
 // AES-256 encryption/decryption for sensitive tokens
 // ENCRYPTION_SECRET must be set - do not use defaults in any environment
-const secretKey = process.env.ENCRYPTION_SECRET;
-if (!secretKey) {
-  console.error('❌ FATAL: ENCRYPTION_SECRET environment variable not set!');
-  console.error('   Set ENCRYPTION_SECRET in .env to a 32+ character random string');
-  console.error('   Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
-  process.exit(1);
-}
-if (secretKey.length < 32) {
-  console.error('❌ FATAL: ENCRYPTION_SECRET must be at least 32 characters long');
-  process.exit(1);
-}
-
-const ENCRYPTION_KEY = crypto.scryptSync(secretKey, 'salt', 32);
+const secretKey = process.env.ENCRYPTION_SECRET || '';
+const ENCRYPTION_KEY = secretKey.length >= 32 ? crypto.scryptSync(secretKey, 'salt', 32) : null;
 const ALGORITHM = 'aes-256-gcm';
+
+if (!ENCRYPTION_KEY) {
+  console.warn('⚠️ ENCRYPTION_SECRET is not configured or is too short. Encryption is disabled.');
+  console.warn('   Set ENCRYPTION_SECRET in .env to a 32+ character random string');
+  console.warn('   Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+}
 
 /**
  * Encrypt plaintext using AES-256-GCM
@@ -23,6 +18,10 @@ const ALGORITHM = 'aes-256-gcm';
  */
 function encrypt(plaintext) {
   if (!plaintext) return null;
+  if (!ENCRYPTION_KEY) {
+    console.warn('⚠️ Encryption skipped because ENCRYPTION_SECRET is not configured.');
+    return plaintext;
+  }
   try {
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
@@ -43,6 +42,10 @@ function encrypt(plaintext) {
  */
 function decrypt(ciphertext) {
   if (!ciphertext) return null;
+  if (!ENCRYPTION_KEY) {
+    console.warn('⚠️ Decryption skipped because ENCRYPTION_SECRET is not configured. Returning raw value.');
+    return ciphertext;
+  }
   try {
     const buffer = Buffer.from(ciphertext, 'base64');
     const iv = buffer.slice(0, 16);

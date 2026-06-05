@@ -17,6 +17,3 @@ yarn-error.log*
 .cache/
 temp/
 scratch/
-resetLogins.js
-resetStorage.js
-resetStorageAtlas.js
