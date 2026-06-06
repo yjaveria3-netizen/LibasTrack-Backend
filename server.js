@@ -21,6 +21,9 @@ try {
 
 const app = express();
 
+// ✅ Trust proxy (Render, Heroku, etc.)
+app.set('trust proxy', 1);
+
 // Disable ETag (avoid caching issues in auth)
 app.set('etag', false);
 
@@ -88,6 +91,7 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: 'Too many authentication attempts, try later',
+  skip: (req) => process.env.NODE_ENV !== 'production',
 });
 
 const apiLimiter = rateLimit({
@@ -95,6 +99,7 @@ const apiLimiter = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => process.env.NODE_ENV !== 'production',
 });
 
 app.use('/api/auth/google', authLimiter);
@@ -131,7 +136,19 @@ mongoose.connect(process.env.MONGODB_URI, {
 });
 
 // ─────────────────────────────────────────────────────
-// 🚀 Routes
+// � Static Files (Frontend)
+// ─────────────────────────────────────────────────────
+const frontendBuildPath = path.join(__dirname, '../frontend/build');
+if (fs.existsSync(frontendBuildPath)) {
+  app.use(express.static(frontendBuildPath));
+  // Serve index.html for SPA routing
+  app.get('/', (req, res) => {
+    res.sendFile(path.join(frontendBuildPath, 'index.html'));
+  });
+}
+
+// ─────────────────────────────────────────────────────
+// �🚀 Routes
 // ─────────────────────────────────────────────────────
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/products', require('./routes/products'));
