@@ -16,10 +16,11 @@ function syncToSheets(user, ret, rowIndex = null) {
     }
     const { accessToken, refreshToken } = tokens;
     const svc = new GoogleSheetsService(accessToken, refreshToken);
+    // Headers: Return ID, Order ID, Customer ID, Customer Name, Reason, Status, Resolution, Refund Amount, Return Date, Notes
     const values = [
       ret.returnId, ret.orderId, ret.customerId || '', ret.customerName || '',
-      ret.productId || '', ret.productName || '', ret.reason, ret.type,
-      ret.status, ret.refundAmount || 0,
+      ret.reason, ret.status, ret.resolution || ret.type || '',
+      ret.refundAmount || 0,
       new Date(ret.requestDate || ret.createdAt).toLocaleDateString('en-PK'),
       ret.notes || '',
     ];

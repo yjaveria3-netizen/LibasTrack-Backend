@@ -16,10 +16,11 @@ function syncToSheets(user, txn, rowIndex = null) {
     }
     const { accessToken, refreshToken } = tokens;
     const svc = new GoogleSheetsService(accessToken, refreshToken);
+    // Headers: Transaction ID, Order ID, Amount, Payment Method, Payment Status, Transaction Date
     const values = [
-      txn.transactionId, txn.orderId, txn.customerId || '', txn.customerName || '',
-      txn.orderStatus || '', txn.orderTotal || 0, txn.price, txn.paymentMethod,
-      txn.paymentStatus, new Date(txn.transactionDate || txn.createdAt).toLocaleDateString('en-PK'),
+      txn.transactionId, txn.orderId, txn.amount || txn.price || 0,
+      txn.paymentMethod, txn.paymentStatus,
+      new Date(txn.transactionDate || txn.createdAt).toLocaleDateString('en-PK'),
     ];
     if (rowIndex) await svc.updateRow(user.spreadsheetIds.financial, rowIndex, values);
     else return await svc.appendRow(user.spreadsheetIds.financial, values);
