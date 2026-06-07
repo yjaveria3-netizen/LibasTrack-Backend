@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -38,6 +39,7 @@ if (!fs.existsSync(logsDir)) {
 // ─────────────────────────────────────────────────────
 // 🛡️ Security + Middleware
 // ─────────────────────────────────────────────────────
+app.use(compression({ threshold: 1024 }));
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 const configuredOrigins = [
@@ -140,7 +142,16 @@ mongoose.connect(process.env.MONGODB_URI, {
 // ─────────────────────────────────────────────────────
 const frontendBuildPath = path.join(__dirname, '../frontend/build');
 if (fs.existsSync(frontendBuildPath)) {
-  app.use(express.static(frontendBuildPath));
+  app.use(express.static(frontendBuildPath, {
+    maxAge: '7d',
+    immutable: true,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  }));
+
   // Serve index.html for SPA routing
   app.get('/', (req, res) => {
     res.sendFile(path.join(frontendBuildPath, 'index.html'));
@@ -159,6 +170,7 @@ app.use('/api/suppliers', require('./routes/suppliers'));
 app.use('/api/returns', require('./routes/returns'));
 app.use('/api/checklist', require('./routes/checklist'));
 app.use('/api/collections', require('./routes/collections'));
+app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/drive', require('./routes/drive'));
 app.use('/api/storage', require('./routes/storage'));
 
