@@ -5,6 +5,14 @@ const path = require('path');
 const fs = require('fs');
 const ExcelJS = require('exceljs');
 const os = require('os');
+const ExcelService = require('../services/excelService');
+const Product = require('../models/Product');
+const Order = require('../models/Order');
+const Customer = require('../models/Customer');
+const Financial = require('../models/Financial');
+const Supplier = require('../models/Supplier');
+const Return = require('../models/Return');
+const Collection = require('../models/Collection');
 
 const BRAND_BLUE = 'FF38BDF8';
 const HEADER_BG = 'FF0EA5E9';
@@ -99,35 +107,31 @@ const WORKBOOKS = [
  */
 router.post('/setup-local', authMiddleware, async (req, res) => {
   try {
+    console.log('[Local Setup] Starting local storage setup...');
     const brandName = (req.user.brand?.name || 'MyBrand')
       .replace(/[^a-zA-Z0-9 _-]/g, '')
       .trim();
+    console.log('[Local Setup] Brand name:', brandName);
 
     const { customPath } = req.body;
-
-    // Debug logging
-    console.log('Received customPath:', customPath);
-    console.log('Type:', typeof customPath);
+    console.log('[Local Setup] Custom path received:', customPath);
 
     // Determine root folder
     let baseDir;
     if (customPath && customPath.trim()) {
       const trimmed = customPath.trim();
       
-      console.log('Trimmed path:', trimmed);
-      
       // Normalize path (handle both forward and backward slashes)
       const normalizedPath = trimmed.replace(/\//g, '\\');
-      
-      console.log('Normalized path:', normalizedPath);
       
       // Check if it looks like an absolute path (starts with drive letter or /)
       const isAbsolute = path.isAbsolute(normalizedPath) || /^[A-Za-z]:/.test(normalizedPath);
       
-      console.log('Is absolute check:', isAbsolute);
-      console.log('path.isAbsolute result:', path.isAbsolute(normalizedPath));
+      console.log('[Local Setup] Normalized path:', normalizedPath);
+      console.log('[Local Setup] Is absolute:', isAbsolute);
       
       if (!isAbsolute) {
+        console.log('[Local Setup] Path is not absolute, returning error');
         return res.status(400).json({
           success: false,
           message: 'Please provide a full absolute path (e.g. C:\\Users\\Name\\Desktop\\MyBrand)',
@@ -137,6 +141,8 @@ router.post('/setup-local', authMiddleware, async (req, res) => {
     } else {
       baseDir = path.join(os.homedir(), 'Documents', 'LibasTrack', brandName);
     }
+    
+    console.log('[Local Setup] Base directory:', baseDir);
 
     // Create sub-folders
     const spreadsheetsDir = path.join(baseDir, 'Database');
@@ -144,20 +150,33 @@ router.post('/setup-local', authMiddleware, async (req, res) => {
     const productImagesDir = path.join(imagesDir, 'products');
     const customerImagesDir = path.join(imagesDir, 'customers');
 
+    console.log('[Local Setup] Creating directories...');
+    console.log('[Local Setup] Database dir:', spreadsheetsDir);
+    console.log('[Local Setup] Images dir:', imagesDir);
+    console.log('[Local Setup] Products images dir:', productImagesDir);
+    console.log('[Local Setup] Customers images dir:', customerImagesDir);
+
     fs.mkdirSync(spreadsheetsDir, { recursive: true });
     fs.mkdirSync(productImagesDir, { recursive: true });
     fs.mkdirSync(customerImagesDir, { recursive: true });
+    console.log('[Local Setup] Directories created successfully');
 
     // Create workbooks inside Database/
+    console.log('[Local Setup] Creating Excel workbooks...');
     const created = [];
     for (const wb of WORKBOOKS) {
       const filePath = path.join(spreadsheetsDir, wb.filename);
+      console.log('[Local Setup] Checking file:', filePath);
       if (!fs.existsSync(filePath)) {
         const workbook = await createStyledWorkbook(wb.sheet, wb.headers);
         await workbook.xlsx.writeFile(filePath);
+        console.log('[Local Setup] Created:', wb.filename);
+      } else {
+        console.log('[Local Setup] File already exists:', wb.filename);
       }
       created.push(wb.filename);
     }
+    console.log('[Local Setup] Excel workbooks created:', created);
 
     // README
     const readmePath = path.join(baseDir, 'README.txt');
@@ -178,7 +197,76 @@ router.post('/setup-local', authMiddleware, async (req, res) => {
     req.user.storageType = 'local_excel';
     req.user.localPath = baseDir;
     await req.user.save();
+    console.log('[Local Setup] User document updated');
 
+    // Sync existing data from MongoDB to Excel files
+    try {
+      console.log('[Local Setup] Starting sync of existing MongoDB data to Excel files...');
+      const excelService = new ExcelService(baseDir);
+      
+      // Sync Products
+      console.log('[Local Setup] Fetching products...');
+      const products = await Product.find({ userId: req.user._id });
+      console.log(`[Local Setup] Found ${products.length} products to sync`);
+      for (const product of products) {
+        await excelService.upsertProduct(product);
+      }
+      
+      // Sync Orders
+      console.log('[Local Setup] Fetching orders...');
+      const orders = await Order.find({ userId: req.user._id });
+      console.log(`[Local Setup] Found ${orders.length} orders to sync`);
+      for (const order of orders) {
+        await excelService.upsertOrder(order);
+      }
+      
+      // Sync Customers
+      console.log('[Local Setup] Fetching customers...');
+      const customers = await Customer.find({ userId: req.user._id });
+      console.log(`[Local Setup] Found ${customers.length} customers to sync`);
+      for (const customer of customers) {
+        await excelService.upsertCustomer(customer);
+      }
+      
+      // Sync Financial
+      console.log('[Local Setup] Fetching financial transactions...');
+      const financials = await Financial.find({ userId: req.user._id });
+      console.log(`[Local Setup] Found ${financials.length} financial transactions to sync`);
+      for (const financial of financials) {
+        await excelService.upsertTransaction(financial);
+      }
+      
+      // Sync Suppliers
+      console.log('[Local Setup] Fetching suppliers...');
+      const suppliers = await Supplier.find({ userId: req.user._id });
+      console.log(`[Local Setup] Found ${suppliers.length} suppliers to sync`);
+      for (const supplier of suppliers) {
+        await excelService.upsertSupplier(supplier);
+      }
+      
+      // Sync Returns
+      console.log('[Local Setup] Fetching returns...');
+      const returns = await Return.find({ userId: req.user._id });
+      console.log(`[Local Setup] Found ${returns.length} returns to sync`);
+      for (const ret of returns) {
+        await excelService.upsertReturn(ret);
+      }
+      
+      // Sync Collections
+      console.log('[Local Setup] Fetching collections...');
+      const collections = await Collection.find({ userId: req.user._id });
+      console.log(`[Local Setup] Found ${collections.length} collections to sync`);
+      for (const collection of collections) {
+        await excelService.upsertCollection(collection);
+      }
+      
+      console.log(`[Local Setup] ✅ Sync complete: ${products.length} products, ${orders.length} orders, ${customers.length} customers, ${financials.length} transactions, ${suppliers.length} suppliers, ${returns.length} returns, ${collections.length} collections synced to local Excel files`);
+    } catch (syncError) {
+      console.error('[Local Setup] ❌ Error syncing existing data to Excel:', syncError.message);
+      console.error('[Local Setup] Full error:', syncError);
+    }
+
+    console.log('[Local Setup] Setup complete, sending response');
     res.json({
       success: true,
       folderPath: baseDir,
@@ -265,6 +353,57 @@ router.post('/switch', authMiddleware, async (req, res) => {
       // Save localPath to user
       req.user.localPath = baseDir;
       console.log('Auto-setup local storage at:', baseDir);
+      
+      // Sync existing data from MongoDB to Excel files
+      try {
+        const excelService = new ExcelService(baseDir);
+        
+        // Sync Products
+        const products = await Product.find({ userId: req.user._id });
+        for (const product of products) {
+          await excelService.upsertProduct(product);
+        }
+        
+        // Sync Orders
+        const orders = await Order.find({ userId: req.user._id });
+        for (const order of orders) {
+          await excelService.upsertOrder(order);
+        }
+        
+        // Sync Customers
+        const customers = await Customer.find({ userId: req.user._id });
+        for (const customer of customers) {
+          await excelService.upsertCustomer(customer);
+        }
+        
+        // Sync Financial
+        const financials = await Financial.find({ userId: req.user._id });
+        for (const financial of financials) {
+          await excelService.upsertTransaction(financial);
+        }
+        
+        // Sync Suppliers
+        const suppliers = await Supplier.find({ userId: req.user._id });
+        for (const supplier of suppliers) {
+          await excelService.upsertSupplier(supplier);
+        }
+        
+        // Sync Returns
+        const returns = await Return.find({ userId: req.user._id });
+        for (const ret of returns) {
+          await excelService.upsertReturn(ret);
+        }
+        
+        // Sync Collections
+        const collections = await Collection.find({ userId: req.user._id });
+        for (const collection of collections) {
+          await excelService.upsertCollection(collection);
+        }
+        
+        console.log(`Synced ${products.length} products, ${orders.length} orders, ${customers.length} customers, ${financials.length} transactions, ${suppliers.length} suppliers, ${returns.length} returns, ${collections.length} collections to local Excel files`);
+      } catch (syncError) {
+        console.error('Error syncing existing data to Excel:', syncError.message);
+      }
     }
     
     await req.user.save();
