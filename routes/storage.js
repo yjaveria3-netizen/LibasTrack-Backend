@@ -105,17 +105,35 @@ router.post('/setup-local', authMiddleware, async (req, res) => {
 
     const { customPath } = req.body;
 
+    // Debug logging
+    console.log('Received customPath:', customPath);
+    console.log('Type:', typeof customPath);
+
     // Determine root folder
     let baseDir;
     if (customPath && customPath.trim()) {
       const trimmed = customPath.trim();
-      if (!path.isAbsolute(trimmed)) {
+      
+      console.log('Trimmed path:', trimmed);
+      
+      // Normalize path (handle both forward and backward slashes)
+      const normalizedPath = trimmed.replace(/\//g, '\\');
+      
+      console.log('Normalized path:', normalizedPath);
+      
+      // Check if it looks like an absolute path (starts with drive letter or /)
+      const isAbsolute = path.isAbsolute(normalizedPath) || /^[A-Za-z]:/.test(normalizedPath);
+      
+      console.log('Is absolute check:', isAbsolute);
+      console.log('path.isAbsolute result:', path.isAbsolute(normalizedPath));
+      
+      if (!isAbsolute) {
         return res.status(400).json({
           success: false,
           message: 'Please provide a full absolute path (e.g. C:\\Users\\Name\\Desktop\\MyBrand)',
         });
       }
-      baseDir = trimmed;
+      baseDir = path.normalize(normalizedPath);
     } else {
       baseDir = path.join(os.homedir(), 'Documents', 'LibasTrack', brandName);
     }
