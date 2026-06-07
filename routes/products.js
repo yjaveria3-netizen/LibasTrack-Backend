@@ -38,6 +38,7 @@ function syncToSheets(user, product, rowIndex = null) {
       product.currency || 'PKR', product.sku || '', product.stockQty || 0,
       product.status, (product.tags || []).join(', '),
       product.imageLink || product.imageViewUrl || '',
+      product.supplierId || '',
       new Date(product.createdAt).toLocaleDateString(),
     ];
     if (rowIndex) await svc.updateRow(user.spreadsheetIds.products, rowIndex, values);
@@ -57,7 +58,10 @@ function syncToExcel(user, product) {
  */
 function saveImageLocally(user, filename, buffer) {
   try {
-    if (!user.localPath) return null;
+    if (!user.localPath) {
+      console.error('Image save error: user.localPath is not configured. Please set up local storage first.');
+      return null;
+    }
 
     // Use the dedicated Images/products sub-folder
     const imagesDir = path.join(user.localPath, 'Images', 'products');
@@ -65,9 +69,11 @@ function saveImageLocally(user, filename, buffer) {
 
     const dest = path.join(imagesDir, filename);
     fs.writeFileSync(dest, buffer);
+    console.log('Image saved successfully to:', dest);
     return dest;
   } catch (e) {
     console.error('Image save error:', e.message);
+    console.error('Full error:', e);
     return null;
   }
 }
@@ -174,7 +180,7 @@ router.get('/stats/low-stock', authMiddleware, async (req, res) => {
 });
 
 // GET /api/products/:id
-router.get('/:id', authMiddleware, async (req, res) => {
+router.get('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const product = await Product.findOne({ _id: req.params.id, userId: req.user._id });
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
@@ -212,6 +218,22 @@ router.post('/', authMiddleware, upload.single('image'), productCreateValidation
       return res.status(400).json({ success: false, message: 'Stock quantity cannot be negative' });
     }
 
+    // Validate foreign keys if provided
+    if (payload.supplierId) {
+      const Supplier = require('../models/Supplier');
+      const supplier = await Supplier.findOne({ userId: req.user._id, supplierId: payload.supplierId });
+      if (!supplier) {
+        return res.status(400).json({ success: false, message: 'Supplier record not found for the provided Supplier ID' });
+      }
+    }
+    if (payload.collection) {
+      const BrandCollection = require('../models/Collection');
+      const col = await BrandCollection.findOne({ userId: req.user._id, name: payload.collection });
+      if (!col) {
+        return res.status(400).json({ success: false, message: 'Collection record not found for the provided Collection' });
+      }
+    }
+
     const product = new Product({ userId: req.user._id, ...payload });
 
     // Handle image upload
@@ -226,7 +248,11 @@ router.post('/', authMiddleware, upload.single('image'), productCreateValidation
         if (localPath) {
           product.imageLink = `file://${localPath}`;
           product.imageThumbnailUrl = `file://${localPath}`;
+        } else {
+          console.warn('Failed to save image locally - product will be saved without image');
         }
+      } else if (req.user.storageType === 'local_excel' && !req.user.localPath) {
+        console.warn('Local storage type is set but localPath is not configured. Please call POST /api/storage/setup-local first.');
       }
       // Google Drive image upload is handled client-side (Drive API);
       // the imageLink / imageViewUrl fields come in via req.body in that flow.
@@ -240,11 +266,27 @@ router.post('/', authMiddleware, upload.single('image'), productCreateValidation
 });
 
 // PUT /api/products/:id
-router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
+router.put('/:id', authMiddleware, mongoIdValidation, upload.single('image'), async (req, res) => {
   try {
     const payload = normalizeProductPayload(req.body);
     const product = await Product.findOne({ _id: req.params.id, userId: req.user._id });
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
+
+    // Validate foreign keys if provided
+    if (payload.supplierId) {
+      const Supplier = require('../models/Supplier');
+      const supplier = await Supplier.findOne({ userId: req.user._id, supplierId: payload.supplierId });
+      if (!supplier) {
+        return res.status(400).json({ success: false, message: 'Supplier record not found for the provided Supplier ID' });
+      }
+    }
+    if (payload.collection) {
+      const BrandCollection = require('../models/Collection');
+      const col = await BrandCollection.findOne({ userId: req.user._id, name: payload.collection });
+      if (!col) {
+        return res.status(400).json({ success: false, message: 'Collection record not found for the provided Collection' });
+      }
+    }
 
     // If a new image is uploaded and there was an old local image, delete it
     if (req.file && product.imageLink && product.imageLink.startsWith('file://')) {
@@ -263,7 +305,11 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
         if (localPath) {
           product.imageLink = `file://${localPath}`;
           product.imageThumbnailUrl = `file://${localPath}`;
+        } else {
+          console.warn('Failed to save image locally - product will be saved without image');
         }
+      } else if (req.user.storageType === 'local_excel' && !req.user.localPath) {
+        console.warn('Local storage type is set but localPath is not configured. Please call POST /api/storage/setup-local first.');
       }
     }
 
@@ -286,7 +332,7 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
 });
 
 // DELETE /api/products/:id
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const product = await Product.findOne({ _id: req.params.id, userId: req.user._id });
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
@@ -308,6 +354,82 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     await product.deleteOne();
     res.json({ success: true, message: 'Product deleted' });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// POST /api/products/auto-link-images
+router.post('/auto-link-images', authMiddleware, async (req, res) => {
+  try {
+    const { mode = 'local' } = req.body;
+    let linkedCount = 0;
+    let errors = [];
+
+    if (mode === 'local' && req.user.storageType === 'local_excel' && req.user.localPath) {
+      // Scan local Images/products folder
+      const imagesDir = path.join(req.user.localPath, 'Images', 'products');
+      
+      if (!fs.existsSync(imagesDir)) {
+        return res.status(400).json({ success: false, message: 'Images/products folder does not exist' });
+      }
+
+      const imageFiles = fs.readdirSync(imagesDir).filter(file => 
+        /\.(jpg|jpeg|png|webp|gif)$/i.test(file)
+      );
+
+      // Get all products
+      const products = await Product.find({ userId: req.user._id });
+      
+      for (const product of products) {
+        // Try to match by product ID first
+        let matchedImage = imageFiles.find(file => 
+          file.toLowerCase().includes(product.productId.toLowerCase()) ||
+          file.toLowerCase().startsWith(product.productId.toLowerCase() + '_')
+        );
+        
+        // If not found by ID, try by name
+        if (!matchedImage) {
+          const sanitizedName = product.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+          matchedImage = imageFiles.find(file => 
+            file.toLowerCase().includes(sanitizedName) ||
+            file.toLowerCase().startsWith(sanitizedName + '_')
+          );
+        }
+
+        if (matchedImage) {
+          const imagePath = path.join(imagesDir, matchedImage);
+          const fileUrl = `file://${imagePath}`;
+          
+          // Update product if it doesn't already have this image
+          if (product.imageLink !== fileUrl) {
+            // Delete old local image if exists
+            if (product.imageLink && product.imageLink.startsWith('file://')) {
+              deleteImageLocally(product.imageLink);
+            }
+            
+            product.imageLink = fileUrl;
+            product.imageThumbnailUrl = fileUrl;
+            await product.save();
+            syncToSheets(req.user, product, product.sheetRowIndex);
+            syncToExcel(req.user, product);
+            linkedCount++;
+          }
+        }
+      }
+    } else if (mode === 'drive' && req.user.driveConnected) {
+      // Google Drive mode - would require Drive API integration
+      return res.status(501).json({ success: false, message: 'Google Drive auto-linking not yet implemented' });
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid mode or storage not configured' });
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Successfully linked ${linkedCount} product images`,
+      linkedCount,
+      errors 
+    });
+  } catch (err) { 
+    res.status(500).json({ success: false, message: err.message }); 
+  }
 });
 
 module.exports = router;

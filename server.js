@@ -204,6 +204,13 @@ app.use((err, req, res, next) => {
     url: req.url,
   });
 
+  if (err.name === 'CastError' || err.kind === 'ObjectId') {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid ID format',
+    });
+  }
+
   if (err.code === 'LIMIT_FILE_SIZE') {
     return res.status(400).json({
       success: false,

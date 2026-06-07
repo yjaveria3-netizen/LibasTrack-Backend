@@ -4,6 +4,7 @@ const authMiddleware = require('../middleware/auth');
 const Customer = require('../models/Customer');
 const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
 const ExcelService = require('../services/excelService');
+const { mongoIdValidation } = require('../middleware/validators');
 
 // Non-blocking fire-and-forget sync
 function syncToSheets(user, customer, rowIndex = null) {
@@ -83,7 +84,7 @@ router.get('/stats/top', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.get('/:id', authMiddleware, async (req, res) => {
+router.get('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const customer = await Customer.findOne({ _id: req.params.id, userId: req.user._id });
     if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
@@ -104,7 +105,7 @@ router.post('/', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.put('/:id', authMiddleware, async (req, res) => {
+router.put('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const customer = await Customer.findOne({ _id: req.params.id, userId: req.user._id });
     if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
@@ -116,7 +117,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const customer = await Customer.findOne({ _id: req.params.id, userId: req.user._id });
     if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });

@@ -48,11 +48,12 @@ class ExcelService {
         product.costPrice || 0, product.price, product.salePrice || '',
         product.currency || 'PKR', product.sku || '', product.stockQty || 0,
         product.status, (product.tags || []).join(', '), product.imageLink || '',
+        product.supplierId || '',
         new Date(product.createdAt).toLocaleDateString(),
       ];
       const existing = this._findRow(ws, 1, product.productId);
       if (existing) {
-        ws.getRow(existing).values = ['', ...values]; // ExcelJS is 1-indexed
+        ws.getRow(existing).values = values;
       } else {
         ws.addRow(values);
       }
@@ -75,7 +76,7 @@ class ExcelService {
         new Date(order.orderDate).toLocaleDateString(),
       ];
       const existing = this._findRow(ws, 1, order.orderId);
-      if (existing) { ws.getRow(existing).values = ['', ...values]; }
+      if (existing) { ws.getRow(existing).values = values; }
       else { ws.addRow(values); }
       await this._save(wb, 'Orders.xlsx');
     } catch (e) { console.error('Excel order sync error:', e.message); }
@@ -96,7 +97,7 @@ class ExcelService {
         (customer.tags || []).join(', '), customer.notes || '',
       ];
       const existing = this._findRow(ws, 1, customer.customerId);
-      if (existing) { ws.getRow(existing).values = ['', ...values]; }
+      if (existing) { ws.getRow(existing).values = values; }
       else { ws.addRow(values); }
       await this._save(wb, 'Customers.xlsx');
     } catch (e) { console.error('Excel customer sync error:', e.message); }
@@ -113,7 +114,7 @@ class ExcelService {
         new Date(txn.transactionDate || txn.createdAt).toLocaleDateString(),
       ];
       const existing = this._findRow(ws, 1, txn.transactionId);
-      if (existing) { ws.getRow(existing).values = ['', ...values]; }
+      if (existing) { ws.getRow(existing).values = values; }
       else { ws.addRow(values); }
       await this._save(wb, 'Financial.xlsx');
     } catch (e) { console.error('Excel financial sync error:', e.message); }
@@ -131,7 +132,7 @@ class ExcelService {
         ret.notes || '',
       ];
       const existing = this._findRow(ws, 1, ret.returnId);
-      if (existing) { ws.getRow(existing).values = ['', ...values]; }
+      if (existing) { ws.getRow(existing).values = values; }
       else { ws.addRow(values); }
       await this._save(wb, 'Returns.xlsx');
     } catch (e) { console.error('Excel returns sync error:', e.message); }
@@ -151,7 +152,7 @@ class ExcelService {
         supplier.totalPurchased || 0, supplier.notes || '',
       ];
       const existing = this._findRow(ws, 1, supplier.supplierId);
-      if (existing) { ws.getRow(existing).values = ['', ...values]; }
+      if (existing) { ws.getRow(existing).values = values; }
       else { ws.addRow(values); }
       await this._save(wb, 'Suppliers.xlsx');
     } catch (e) { console.error('Excel supplier sync error:', e.message); }
@@ -162,13 +163,19 @@ class ExcelService {
       const wb = await this._loadWorkbook('Collections.xlsx');
       const ws = wb.getWorksheet('Collections') || wb.addWorksheet('Collections');
       const values = [
-        col.collectionId, col.name, col.theme || '',
-        col.season || '', col.description || '', col.status || 'Planning',
+        col.collectionId,
+        col.name,
+        col.description || '',
+        col.season || '',
+        col.year || '',
+        col.theme || '',
+        col.status || 'Planning',
         col.launchDate ? new Date(col.launchDate).toLocaleDateString('en-PK') : '',
-        (col.tags || []).join(', '), col.notes || '',
+        col.productCount || 0,
+        col.notes || '',
       ];
       const existing = this._findRow(ws, 1, col.collectionId);
-      if (existing) { ws.getRow(existing).values = ['', ...values]; }
+      if (existing) { ws.getRow(existing).values = values; }
       else { ws.addRow(values); }
       await this._save(wb, 'Collections.xlsx');
     } catch (e) { console.error('Excel collection sync error:', e.message); }

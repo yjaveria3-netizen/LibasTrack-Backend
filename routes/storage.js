@@ -40,7 +40,7 @@ const WORKBOOKS = [
     sheet: 'Products',
     headers: ['Product ID', 'Name', 'Category', 'Subcategory', 'Collection', 'Season', 'Fabric',
       'Cost Price', 'Price', 'Sale Price', 'Currency', 'SKU', 'Stock Qty', 'Status',
-      'Tags', 'Image Path', 'Created At'],
+      'Tags', 'Image Path', 'Supplier ID', 'Created At'],
   },
   {
     filename: 'Orders.xlsx',
@@ -60,7 +60,7 @@ const WORKBOOKS = [
   {
     filename: 'Financial.xlsx',
     sheet: 'Transactions',
-    headers: ['Transaction ID', 'Order ID', 'Amount', 'Payment Method', 'Payment Status', 'Transaction Date'],
+    headers: ['Transaction ID', 'Order ID', 'Customer ID', 'Customer Name', 'Order Status', 'Order Total', 'Amount', 'Payment Method', 'Payment Status', 'Transaction Date'],
   },
   {
     filename: 'Suppliers.xlsx',
@@ -72,8 +72,8 @@ const WORKBOOKS = [
   {
     filename: 'Returns.xlsx',
     sheet: 'Returns',
-    headers: ['Return ID', 'Order ID', 'Customer ID', 'Customer Name', 'Reason', 'Status',
-      'Resolution', 'Refund Amount', 'Return Date', 'Notes'],
+    headers: ['Return ID', 'Order ID', 'Customer ID', 'Customer Name', 'Product ID', 'Product Name', 'Reason', 'Type', 'Status',
+      'Refund Amount', 'Return Date', 'Notes'],
   },
   {
     filename: 'Collections.xlsx',

@@ -5,6 +5,7 @@ const Financial = require('../models/Financial');
 const Order = require('../models/Order');
 const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
 const ExcelService = require('../services/excelService');
+const { mongoIdValidation } = require('../middleware/validators');
 
 function syncToSheets(user, txn, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.financial) return;
@@ -16,9 +17,10 @@ function syncToSheets(user, txn, rowIndex = null) {
     }
     const { accessToken, refreshToken } = tokens;
     const svc = new GoogleSheetsService(accessToken, refreshToken);
-    // Headers: Transaction ID, Order ID, Amount, Payment Method, Payment Status, Transaction Date
+    // Headers: Transaction ID, Order ID, Customer ID, Customer Name, Order Status, Order Total, Amount, Payment Method, Payment Status, Transaction Date
     const values = [
-      txn.transactionId, txn.orderId, txn.amount || txn.price || 0,
+      txn.transactionId, txn.orderId, txn.customerId || '', txn.customerName || '',
+      txn.orderStatus || '', txn.orderTotal || 0, txn.amount || txn.price || 0,
       txn.paymentMethod, txn.paymentStatus,
       new Date(txn.transactionDate || txn.createdAt).toLocaleDateString('en-PK'),
     ];
@@ -95,6 +97,12 @@ router.post('/', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Price cannot be negative' });
     }
 
+    // Validate orderId exists
+    const order = await Order.findOne({ userId: req.user._id, orderId });
+    if (!order) {
+      return res.status(400).json({ success: false, message: 'Order record not found for the provided Order ID' });
+    }
+
     await populateFinancialRelations(req.user._id, payload);
     const txn = new Financial({ userId: req.user._id, ...payload });
     await txn.save();
@@ -104,11 +112,20 @@ router.post('/', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.put('/:id', authMiddleware, async (req, res) => {
+router.put('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const txn = await Financial.findOne({ _id: req.params.id, userId: req.user._id });
     if (!txn) return res.status(404).json({ success: false, message: 'Transaction not found' });
     const payload = { ...req.body };
+
+    // Validate orderId if provided
+    if (payload.orderId) {
+      const order = await Order.findOne({ userId: req.user._id, orderId: payload.orderId });
+      if (!order) {
+        return res.status(400).json({ success: false, message: 'Order record not found for the provided Order ID' });
+      }
+    }
+
     await populateFinancialRelations(req.user._id, payload);
     Object.assign(txn, payload);
     await txn.save();
@@ -118,7 +135,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const txn = await Financial.findOne({ _id: req.params.id, userId: req.user._id });
     if (!txn) return res.status(404).json({ success: false, message: 'Transaction not found' });

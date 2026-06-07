@@ -5,6 +5,7 @@ const Return = require('../models/Return');
 const Order = require('../models/Order');
 const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
 const ExcelService = require('../services/excelService');
+const { mongoIdValidation } = require('../middleware/validators');
 
 function syncToSheets(user, ret, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.returns) return;
@@ -16,10 +17,11 @@ function syncToSheets(user, ret, rowIndex = null) {
     }
     const { accessToken, refreshToken } = tokens;
     const svc = new GoogleSheetsService(accessToken, refreshToken);
-    // Headers: Return ID, Order ID, Customer ID, Customer Name, Reason, Status, Resolution, Refund Amount, Return Date, Notes
+    // Headers: Return ID, Order ID, Customer ID, Customer Name, Product ID, Product Name, Reason, Type, Status, Refund Amount, Return Date, Notes
     const values = [
       ret.returnId, ret.orderId, ret.customerId || '', ret.customerName || '',
-      ret.reason, ret.status, ret.resolution || ret.type || '',
+      ret.productId || '', ret.productName || '',
+      ret.reason, ret.type || '', ret.status,
       ret.refundAmount || 0,
       new Date(ret.requestDate || ret.createdAt).toLocaleDateString('en-PK'),
       ret.notes || '',
@@ -79,15 +81,6 @@ router.get('/', authMiddleware, async (req, res) => {
   } catch(err) { res.status(500).json({ success:false, message:err.message }); }
 });
 
-// GET /api/returns/:id
-router.get('/:id', authMiddleware, async (req, res) => {
-  try {
-    const ret = await Return.findOne({ _id: req.params.id, userId: req.user._id });
-    if (!ret) return res.status(404).json({ success: false, message: 'Return not found' });
-    res.json({ success: true, return: ret });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
-});
-
 router.get('/stats/summary', authMiddleware, async (req, res) => {
   try {
     const total = await Return.countDocuments({ userId: req.user._id });
@@ -106,9 +99,46 @@ router.get('/stats/summary', authMiddleware, async (req, res) => {
   } catch(err) { res.status(500).json({ success:false, message:err.message }); }
 });
 
+// GET /api/returns/:id
+router.get('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
+  try {
+    const ret = await Return.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!ret) return res.status(404).json({ success: false, message: 'Return not found' });
+    res.json({ success: true, return: ret });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const payload = { ...req.body };
+
+    // Validate orderId exists
+    if (payload.orderId) {
+      const order = await Order.findOne({ userId: req.user._id, orderId: payload.orderId });
+      if (!order) {
+        return res.status(400).json({ success: false, message: 'Order record not found for the provided Order ID' });
+      }
+    }
+
+    // Validate customerId if provided
+    if (payload.customerId) {
+      const Customer = require('../models/Customer');
+      const customer = await Customer.findOne({ userId: req.user._id, customerId: payload.customerId });
+      if (!customer) {
+        return res.status(400).json({ success: false, message: 'Customer record not found for the provided Customer ID' });
+      }
+    }
+
+    // Validate productId if provided
+    if (payload.productId) {
+      const Product = require('../models/Product');
+      const product = await Product.findOne({ userId: req.user._id, productId: payload.productId });
+      if (!product) {
+        return res.status(400).json({ success: false, message: 'Product record not found for the provided Product ID' });
+      }
+    }
+
     await populateReturnRelations(req.user._id, payload);
     const ret = new Return({ userId: req.user._id, ...payload });
     await ret.save();
@@ -118,11 +148,38 @@ router.post('/', authMiddleware, async (req, res) => {
   } catch(err) { res.status(500).json({ success:false, message:err.message }); }
 });
 
-router.put('/:id', authMiddleware, async (req, res) => {
+router.put('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const ret = await Return.findOne({ _id: req.params.id, userId: req.user._id });
     if (!ret) return res.status(404).json({ success:false, message:'Not found' });
     const payload = { ...req.body };
+
+    // Validate orderId if provided
+    if (payload.orderId) {
+      const order = await Order.findOne({ userId: req.user._id, orderId: payload.orderId });
+      if (!order) {
+        return res.status(400).json({ success: false, message: 'Order record not found for the provided Order ID' });
+      }
+    }
+
+    // Validate customerId if provided
+    if (payload.customerId) {
+      const Customer = require('../models/Customer');
+      const customer = await Customer.findOne({ userId: req.user._id, customerId: payload.customerId });
+      if (!customer) {
+        return res.status(400).json({ success: false, message: 'Customer record not found for the provided Customer ID' });
+      }
+    }
+
+    // Validate productId if provided
+    if (payload.productId) {
+      const Product = require('../models/Product');
+      const product = await Product.findOne({ userId: req.user._id, productId: payload.productId });
+      if (!product) {
+        return res.status(400).json({ success: false, message: 'Product record not found for the provided Product ID' });
+      }
+    }
+
     await populateReturnRelations(req.user._id, payload);
     Object.assign(ret, payload);
     await ret.save();
@@ -132,7 +189,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
   } catch(err) { res.status(500).json({ success:false, message:err.message }); }
 });
 
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const ret = await Return.findOne({ _id: req.params.id, userId: req.user._id });
     if (!ret) return res.status(404).json({ success:false, message:'Not found' });

@@ -4,6 +4,7 @@ const authMiddleware = require('../middleware/auth');
 const BrandCollection = require('../models/Collection');
 const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
 const ExcelService = require('../services/excelService');
+const { mongoIdValidation } = require('../middleware/validators');
 
 function syncToSheets(user, col, rowIndex = null) {
     if (!user.driveConnected || !user.spreadsheetIds?.collections) return null;
@@ -74,7 +75,7 @@ router.post('/', authMiddleware, async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.put('/:id', authMiddleware, async (req, res) => {
+router.put('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
     try {
         const col = await BrandCollection.findOne({ _id: req.params.id, userId: req.user._id });
         if (!col) return res.status(404).json({ success: false, message: 'Collection not found' });
@@ -86,7 +87,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
     try {
         const col = await BrandCollection.findOne({ _id: req.params.id, userId: req.user._id });
         if (!col) return res.status(404).json({ success: false, message: 'Collection not found' });

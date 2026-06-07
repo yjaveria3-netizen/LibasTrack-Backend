@@ -4,6 +4,7 @@ const authMiddleware = require('../middleware/auth');
 const Supplier = require('../models/Supplier');
 const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
 const ExcelService = require('../services/excelService');
+const { mongoIdValidation } = require('../middleware/validators');
 
 function syncToSheets(user, s, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.suppliers) return;
@@ -79,7 +80,7 @@ router.post('/', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.put('/:id', authMiddleware, async (req, res) => {
+router.put('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const supplier = await Supplier.findOne({ _id: req.params.id, userId: req.user._id });
     if (!supplier) return res.status(404).json({ success: false, message: 'Supplier not found' });
@@ -91,7 +92,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const supplier = await Supplier.findOne({ _id: req.params.id, userId: req.user._id });
     if (!supplier) return res.status(404).json({ success: false, message: 'Supplier not found' });

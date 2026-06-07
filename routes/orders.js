@@ -6,6 +6,7 @@ const Customer = require('../models/Customer');
 const { GoogleSheetsService, syncAsync } = require('../services/googleSheets');
 const ExcelService = require('../services/excelService');
 const PDFDocument = require('pdfkit');
+const { mongoIdValidation } = require('../middleware/validators');
 
 function syncToSheets(user, order, rowIndex = null) {
   if (!user.driveConnected || !user.spreadsheetIds?.orders) return;
@@ -187,9 +188,29 @@ router.get('/stats/top-products', authMiddleware, async (req, res) => {
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const payload = normalizeOrderPayload(req.body);
-    const { customerId, total } = payload;
+    const { customerId, total, items } = payload;
     if (!customerId || !total) {
       return res.status(400).json({ success: false, message: 'Customer ID and total are required' });
+    }
+
+    // Validate customerId exists
+    const customer = await Customer.findOne({ userId: req.user._id, customerId });
+    if (!customer) {
+      return res.status(400).json({ success: false, message: 'Customer record not found for the provided Customer ID' });
+    }
+
+    // Validate all products in items exist
+    if (items && Array.isArray(items) && items.length > 0) {
+      const Product = require('../models/Product');
+      const productIds = items.map(item => item.productId).filter(id => id);
+      if (productIds.length > 0) {
+        const products = await Product.find({ userId: req.user._id, productId: { $in: productIds } }).select('productId');
+        const foundIds = new Set(products.map(p => p.productId));
+        const missingIds = productIds.filter(id => !foundIds.has(id));
+        if (missingIds.length > 0) {
+          return res.status(400).json({ success: false, message: 'Product record not found for one or more items' });
+        }
+      }
     }
 
     await populateOrderRelations(req.user._id, payload);
@@ -202,11 +223,34 @@ router.post('/', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.put('/:id', authMiddleware, async (req, res) => {
+router.put('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const payload = normalizeOrderPayload(req.body);
     const order = await Order.findOne({ _id: req.params.id, userId: req.user._id });
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+
+    // Validate customerId if provided
+    if (payload.customerId) {
+      const customer = await Customer.findOne({ userId: req.user._id, customerId: payload.customerId });
+      if (!customer) {
+        return res.status(400).json({ success: false, message: 'Customer record not found for the provided Customer ID' });
+      }
+    }
+
+    // Validate all products in items if provided
+    if (payload.items && Array.isArray(payload.items) && payload.items.length > 0) {
+      const Product = require('../models/Product');
+      const productIds = payload.items.map(item => item.productId).filter(id => id);
+      if (productIds.length > 0) {
+        const products = await Product.find({ userId: req.user._id, productId: { $in: productIds } }).select('productId');
+        const foundIds = new Set(products.map(p => p.productId));
+        const missingIds = productIds.filter(id => !foundIds.has(id));
+        if (missingIds.length > 0) {
+          return res.status(400).json({ success: false, message: 'Product record not found for one or more items' });
+        }
+      }
+    }
+
     await populateOrderRelations(req.user._id, payload);
     Object.assign(order, payload);
     await order.save();
@@ -217,7 +261,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-router.get('/:id/invoice', authMiddleware, async (req, res) => {
+router.get('/:id/invoice', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const order = await Order.findOne({ _id: req.params.id, userId: req.user._id });
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
@@ -306,7 +350,7 @@ router.get('/:id/invoice', authMiddleware, async (req, res) => {
   }
 });
 
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
   try {
     const order = await Order.findOne({ _id: req.params.id, userId: req.user._id });
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' });

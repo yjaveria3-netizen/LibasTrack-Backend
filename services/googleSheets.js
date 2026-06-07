@@ -2,13 +2,13 @@ const { google } = require('googleapis');
 const XLSX = require('xlsx');
 
 const SPREADSHEET_HEADERS = {
-  products: ['Product ID', 'Name', 'Category', 'Subcategory', 'Collection', 'Season', 'Fabric', 'Cost Price', 'Price', 'Sale Price', 'Currency', 'SKU', 'Stock Qty', 'Status', 'Tags', 'Image Path', 'Created At'],
+  products: ['Product ID', 'Name', 'Category', 'Subcategory', 'Collection', 'Season', 'Fabric', 'Cost Price', 'Price', 'Sale Price', 'Currency', 'SKU', 'Stock Qty', 'Status', 'Tags', 'Image Path', 'Supplier ID', 'Created At'],
   orders: ['Order ID', 'Customer ID', 'Customer Name', 'Customer Phone', 'Subtotal', 'Discount', 'Shipping', 'Tax', 'Total', 'Currency', 'Status', 'Channel', 'Priority', 'Shipping Method', 'Courier', 'Tracking #', 'Shipping Address', 'Est. Delivery', 'Notes', 'Order Date'],
   customers: ['Customer ID', 'Full Name', 'Email', 'Phone', 'WhatsApp', 'City', 'Country', 'Address', 'Gender', 'Segment', 'Source', 'Total Spent', 'Total Orders', 'Loyalty Points', 'Date Joined', 'Subscribed', 'Tags', 'Notes'],
-  financial: ['Transaction ID', 'Order ID', 'Amount', 'Payment Method', 'Payment Status', 'Transaction Date'],
+  financial: ['Transaction ID', 'Order ID', 'Customer ID', 'Customer Name', 'Order Status', 'Order Total', 'Amount', 'Payment Method', 'Payment Status', 'Transaction Date'],
   suppliers: ['Supplier ID', 'Name', 'Contact Person', 'Email', 'Phone', 'WhatsApp', 'City', 'Country', 'Category', 'Materials', 'Rating', 'Lead Time (Days)', 'Min Order', 'Payment Terms', 'Active', 'Total Purchased', 'Notes'],
   collections: ['Collection ID', 'Name', 'Description', 'Season', 'Year', 'Theme', 'Status', 'Launch Date', 'Product Count', 'Notes'],
-  returns: ['Return ID', 'Order ID', 'Customer ID', 'Customer Name', 'Reason', 'Status', 'Resolution', 'Refund Amount', 'Return Date', 'Notes'],
+  returns: ['Return ID', 'Order ID', 'Customer ID', 'Customer Name', 'Product ID', 'Product Name', 'Reason', 'Type', 'Status', 'Refund Amount', 'Return Date', 'Notes'],
 };
 
 class GoogleSheetsService {
@@ -226,14 +226,14 @@ class GoogleSheetsService {
         'Product ID': 'productId', 'Name': 'name', 'Category': 'category', 'Subcategory': 'subcategory',
         'Collection': 'collection', 'Season': 'season', 'Fabric': 'fabric', 'Cost Price': 'costPrice',
         'Price': 'price', 'Sale Price': 'salePrice', 'Currency': 'currency', 'SKU': 'sku',
-        'Stock Qty': 'stockQty', 'Status': 'status', 'Tags': 'tags', 'Image Link': 'imageLink'
+        'Stock Qty': 'stockQty', 'Status': 'status', 'Tags': 'tags', 'Image Path': 'imageLink', 'Supplier ID': 'supplierId'
       },
       orders: {
         'Order ID': 'orderId', 'Customer ID': 'customerId', 'Customer Name': 'customerName',
-        'Phone': 'customerPhone', 'Subtotal': 'subtotal', 'Discount': 'discountAmount',
+        'Customer Phone': 'customerPhone', 'Subtotal': 'subtotal', 'Discount': 'discountAmount',
         'Shipping': 'shippingCost', 'Tax': 'taxAmount', 'Total': 'total', 'Currency': 'currency',
         'Status': 'status', 'Channel': 'channel', 'Priority': 'priority', 'Shipping Method': 'shippingMethod',
-        'Courier': 'courierName', 'Tracking #': 'trackingNumber', 'Address': 'shippingAddress',
+        'Courier': 'courierName', 'Tracking #': 'trackingNumber', 'Shipping Address': 'shippingAddress',
         'Est. Delivery': 'estimatedDelivery', 'Notes': 'notes', 'Order Date': 'orderDate'
       },
       customers: {
@@ -241,7 +241,7 @@ class GoogleSheetsService {
         'WhatsApp': 'whatsapp', 'City': 'city', 'Country': 'country', 'Address': 'address',
         'Gender': 'gender', 'Segment': 'segment', 'Source': 'source', 'Total Spent': 'totalSpent',
         'Total Orders': 'totalOrders', 'Loyalty Points': 'loyaltyPoints', 'Date Joined': 'dateJoined',
-        'Subscribed': 'subscribed', 'Tags': 'tags', 'Notes': 'notes'
+        'Subscribed': 'isSubscribed', 'Tags': 'tags', 'Notes': 'notes'
       },
       financial: {
         'Transaction ID': 'transactionId', 'Order ID': 'orderId', 'Customer ID': 'customerId',
@@ -252,8 +252,8 @@ class GoogleSheetsService {
         'Supplier ID': 'supplierId', 'Name': 'name', 'Contact Person': 'contactPerson',
         'Email': 'email', 'Phone': 'phone', 'WhatsApp': 'whatsapp', 'City': 'city',
         'Country': 'country', 'Category': 'category', 'Materials': 'materials',
-        'Rating': 'rating', 'Lead Time (Days)': 'leadTime', 'Min Order': 'minOrder',
-        'Payment Terms': 'paymentTerms', 'Active': 'active', 'Total Purchased': 'totalPurchased', 'Notes': 'notes'
+        'Rating': 'rating', 'Lead Time (Days)': 'leadTimeDays', 'Min Order': 'minimumOrder',
+        'Payment Terms': 'paymentTerms', 'Active': 'isActive', 'Total Purchased': 'totalPurchased', 'Notes': 'notes'
       },
       collections: {
         'Collection ID': 'collectionId', 'Name': 'name', 'Description': 'description',
