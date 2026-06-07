@@ -190,6 +190,9 @@ router.get('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
 
 // POST /api/products
 router.post('/', authMiddleware, upload.single('image'), productCreateValidation, async (req, res) => {
+  console.log('[Product POST] Request received');
+  console.log('[Product POST] req.body keys:', Object.keys(req.body));
+  console.log('[Product POST] req.file:', req.file ? 'exists' : 'null');
   try {
     const payload = normalizeProductPayload(req.body);
     const { name, category, price } = payload;
@@ -237,27 +240,68 @@ router.post('/', authMiddleware, upload.single('image'), productCreateValidation
     const product = new Product({ userId: req.user._id, ...payload });
 
     // Handle image upload
+    console.log('[Product Upload] Image upload check:');
+    console.log('  - req.file exists:', !!req.file);
+    console.log('  - storageType:', req.user.storageType);
+    console.log('  - localPath:', req.user.localPath);
+    
     if (req.file) {
       // Sanitize filename to prevent directory traversal attacks
       const baseName = path.basename(req.file.originalname).replace(/\s/g, '_');
       const filename = `${Date.now()}_${baseName}`;
+      console.log('  - filename:', filename);
+      console.log('  - file size:', req.file.buffer.length);
 
       if (req.user.storageType === 'local_excel' && req.user.localPath) {
         // Local mode → save to <workspace>/Images/
+        console.log('  - Attempting to save image locally...');
         const localPath = saveImageLocally(req.user, filename, req.file.buffer);
+        console.log('  - saveImageLocally returned:', localPath);
         if (localPath) {
           product.imageLink = `file://${localPath}`;
           product.imageThumbnailUrl = `file://${localPath}`;
+          console.log('  - Image path saved to product:', product.imageLink);
         } else {
           console.warn('Failed to save image locally - product will be saved without image');
         }
       } else if (req.user.storageType === 'local_excel' && !req.user.localPath) {
         console.warn('Local storage type is set but localPath is not configured. Please call POST /api/storage/setup-local first.');
+      } else if (req.user.storageType === 'google_drive') {
+        console.log('  - Google Drive mode - uploading to Drive...');
+        try {
+          const tokens = req.user.getDecryptedTokens();
+          if (!tokens) {
+            console.warn('Failed to decrypt tokens for Drive upload');
+          } else {
+            const sheetsService = new GoogleSheetsService(tokens.accessToken, tokens.refreshToken);
+            
+            // Get or find the Images folder in Drive
+            const imagesFolderId = await sheetsService.findOrCreateSubfolder(req.user.driveId, 'Images');
+            const productsFolderId = await sheetsService.findOrCreateSubfolder(imagesFolderId, 'products');
+            
+            // Upload file to Drive
+            const uploadResult = await sheetsService.uploadFileToDrive(
+              productsFolderId,
+              filename,
+              req.file.mimetype,
+              req.file.buffer
+            );
+            
+            console.log('  - File uploaded to Drive:', uploadResult);
+            product.imageLink = uploadResult.webViewLink;
+            product.imageViewUrl = uploadResult.webContentLink;
+            product.imageThumbnailUrl = uploadResult.webContentLink;
+            product.imageDriveFileId = uploadResult.id;
+            console.log('  - Image path saved to product:', product.imageLink);
+          }
+        } catch (err) {
+          console.error('Drive upload error:', err.message);
+          console.warn('Product will be saved without image due to upload error');
+        }
       }
-      // Google Drive image upload is handled client-side (Drive API);
-      // the imageLink / imageViewUrl fields come in via req.body in that flow.
     }
 
+    console.log('[Product Upload] Saving product with imageLink:', product.imageLink);
     await product.save();
     syncToSheets(req.user, product);
     syncToExcel(req.user, product);
@@ -288,33 +332,99 @@ router.put('/:id', authMiddleware, mongoIdValidation, upload.single('image'), as
       }
     }
 
-    // If a new image is uploaded and there was an old local image, delete it
+    // If a new image is uploaded and there was an old image, delete it
+    if (req.file && product.imageDriveFileId) {
+      try {
+        const tokens = req.user.getDecryptedTokens();
+        if (tokens) {
+          const sheetsService = new GoogleSheetsService(tokens.accessToken, tokens.refreshToken);
+          await sheetsService.drive.files.delete({ fileId: product.imageDriveFileId });
+          console.log('Deleted old Drive image:', product.imageDriveFileId);
+        }
+      } catch (err) {
+        console.error('Failed to delete old Drive image:', err.message);
+      }
+    }
     if (req.file && product.imageLink && product.imageLink.startsWith('file://')) {
       deleteImageLocally(product.imageLink);
     }
 
     Object.assign(product, payload);
 
+    console.log('[Product Update] Image upload check:');
+    console.log('  - req.file exists:', !!req.file);
+    console.log('  - storageType:', req.user.storageType);
+    console.log('  - localPath:', req.user.localPath);
+
     if (req.file) {
       // Sanitize filename to prevent directory traversal attacks
       const baseName = path.basename(req.file.originalname).replace(/\s/g, '_');
       const filename = `${Date.now()}_${baseName}`;
+      console.log('  - filename:', filename);
+      console.log('  - file size:', req.file.buffer.length);
 
       if (req.user.storageType === 'local_excel' && req.user.localPath) {
+        console.log('  - Attempting to save image locally...');
         const localPath = saveImageLocally(req.user, filename, req.file.buffer);
+        console.log('  - saveImageLocally returned:', localPath);
         if (localPath) {
           product.imageLink = `file://${localPath}`;
           product.imageThumbnailUrl = `file://${localPath}`;
+          console.log('  - Image path saved to product:', product.imageLink);
         } else {
           console.warn('Failed to save image locally - product will be saved without image');
         }
       } else if (req.user.storageType === 'local_excel' && !req.user.localPath) {
         console.warn('Local storage type is set but localPath is not configured. Please call POST /api/storage/setup-local first.');
+      } else if (req.user.storageType === 'google_drive') {
+        console.log('  - Google Drive mode - uploading to Drive...');
+        try {
+          const tokens = req.user.getDecryptedTokens();
+          if (!tokens) {
+            console.warn('Failed to decrypt tokens for Drive upload');
+          } else {
+            const sheetsService = new GoogleSheetsService(tokens.accessToken, tokens.refreshToken);
+            
+            // Get or find the Images folder in Drive
+            const imagesFolderId = await sheetsService.findOrCreateSubfolder(req.user.driveId, 'Images');
+            const productsFolderId = await sheetsService.findOrCreateSubfolder(imagesFolderId, 'products');
+            
+            // Upload file to Drive
+            const uploadResult = await sheetsService.uploadFileToDrive(
+              productsFolderId,
+              filename,
+              req.file.mimetype,
+              req.file.buffer
+            );
+            
+            console.log('  - File uploaded to Drive:', uploadResult);
+            product.imageLink = uploadResult.webViewLink;
+            product.imageViewUrl = uploadResult.webContentLink;
+            product.imageThumbnailUrl = uploadResult.webContentLink;
+            product.imageDriveFileId = uploadResult.id;
+            console.log('  - Image path saved to product:', product.imageLink);
+          }
+        } catch (err) {
+          console.error('Drive upload error:', err.message);
+          console.warn('Product will be saved without image due to upload error');
+        }
       }
     }
 
     // Handle image removal (frontend sends removeImage: 'true')
     if (payload.removeImage === 'true') {
+      if (product.imageDriveFileId) {
+        try {
+          const tokens = req.user.getDecryptedTokens();
+          if (tokens) {
+            const sheetsService = new GoogleSheetsService(tokens.accessToken, tokens.refreshToken);
+            await sheetsService.drive.files.delete({ fileId: product.imageDriveFileId });
+            console.log('Deleted Drive image on removal:', product.imageDriveFileId);
+          }
+        } catch (err) {
+          console.error('Failed to delete Drive image on removal:', err.message);
+        }
+      }
       if (product.imageLink && product.imageLink.startsWith('file://')) {
         deleteImageLocally(product.imageLink);
       }
@@ -324,6 +434,7 @@ router.put('/:id', authMiddleware, mongoIdValidation, upload.single('image'), as
       product.imageDriveFileId = '';
     }
 
+    console.log('[Product Update] Saving product with imageLink:', product.imageLink);
     await product.save();
     syncToSheets(req.user, product, product.sheetRowIndex);
     syncToExcel(req.user, product);
@@ -340,6 +451,20 @@ router.delete('/:id', authMiddleware, mongoIdValidation, async (req, res) => {
     // Delete local image if it exists
     if (product.imageLink && product.imageLink.startsWith('file://')) {
       deleteImageLocally(product.imageLink);
+    }
+
+    // Delete Drive image if it exists
+    if (product.imageDriveFileId) {
+      try {
+        const tokens = req.user.getDecryptedTokens();
+        if (tokens) {
+          const sheetsService = new GoogleSheetsService(tokens.accessToken, tokens.refreshToken);
+          await sheetsService.drive.files.delete({ fileId: product.imageDriveFileId });
+          console.log('Deleted Drive image on product delete:', product.imageDriveFileId);
+        }
+      } catch (err) {
+        console.error('Failed to delete Drive image on product delete:', err.message);
+      }
     }
 
     // Remove from Google Sheets

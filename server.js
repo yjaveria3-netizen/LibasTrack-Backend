@@ -138,7 +138,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 });
 
 // ─────────────────────────────────────────────────────
-// � Static Files (Frontend)
+// 📁 Static Files (Frontend)
 // ─────────────────────────────────────────────────────
 const frontendBuildPath = path.join(__dirname, '../frontend/build');
 if (fs.existsSync(frontendBuildPath)) {
@@ -159,8 +159,15 @@ if (fs.existsSync(frontendBuildPath)) {
 }
 
 // ─────────────────────────────────────────────────────
-// �🚀 Routes
+// 🚀 Routes
 // ─────────────────────────────────────────────────────
+// Log all requests to products endpoint
+app.use('/api/products', (req, res, next) => {
+  console.log(`[SERVER] ${req.method} /api/products${req.path}`);
+  console.log(`[SERVER] Content-Type: ${req.get('Content-Type')}`);
+  next();
+});
+
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/orders', require('./routes/orders'));

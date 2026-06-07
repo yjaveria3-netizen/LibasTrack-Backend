@@ -29,6 +29,11 @@ router.post('/connect', authMiddleware, async (req, res) => {
 
     // Find or create Database subfolder
     const dbFolderId = await sheetsService.findOrCreateSubfolder(folderId, 'Database');
+    
+    // Find or create Images subfolder with product and customer subfolders
+    const imagesFolderId = await sheetsService.findOrCreateSubfolder(folderId, 'Images');
+    await sheetsService.findOrCreateSubfolder(imagesFolderId, 'products');
+    await sheetsService.findOrCreateSubfolder(imagesFolderId, 'customers');
 
     // Create all spreadsheets in parallel for speed
     const sheetTypes = ['products', 'orders', 'customers', 'financial', 'suppliers', 'collections', 'returns'];
@@ -122,6 +127,17 @@ router.post('/connect-existing', authMiddleware, async (req, res) => {
       allFiles = [...allFiles, ...subFiles];
       console.log(`[Drive Connect] Total files after scanning subfolder: ${allFiles.length}`);
     }
+
+    // Ensure Images folder and subfolders exist
+    const imagesSubfolder = allFiles.find(f => f.name === 'Images' && f.mimeType === 'application/vnd.google-apps.folder');
+    let imagesFolderId;
+    if (imagesSubfolder) {
+      imagesFolderId = imagesSubfolder.id;
+    } else {
+      imagesFolderId = await sheetsService.findOrCreateSubfolder(folderId, 'Images');
+    }
+    await sheetsService.findOrCreateSubfolder(imagesFolderId, 'products');
+    await sheetsService.findOrCreateSubfolder(imagesFolderId, 'customers');
 
     console.log('[Drive Connect] Files available:', allFiles.map(f => `${f.name} (${f.mimeType})`));
 

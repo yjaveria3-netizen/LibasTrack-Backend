@@ -101,152 +101,158 @@ class GoogleSheetsService {
     if (folderId) {
       await this.drive.files.update({
         fileId: spreadsheetId,
-        addParents: folderId,
-        removeParents: 'root',
-        fields: 'id, parents',
+        addParents: [folderId],
+        fields: 'id',
       });
     }
+
     return spreadsheetId;
   }
 
   async appendRow(spreadsheetId, values) {
-    if (!spreadsheetId) return null;
     await this.ensureValidToken();
-    const { data } = await this.sheets.spreadsheets.values.append({
+    await this.sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: 'A:A',
-      valueInputOption: 'USER_ENTERED',
+      range: 'A1',
+      valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       resource: { values: [values] },
     });
-    const updatedRange = data.updates?.updatedRange;
-    if (updatedRange) {
-      const match = updatedRange.match(/(\d+)$/);
-      return match ? parseInt(match[1]) : null;
-    }
-    return null;
   }
 
   async updateRow(spreadsheetId, rowIndex, values) {
-    if (!spreadsheetId || !rowIndex) return;
     await this.ensureValidToken();
+    const range = `A${rowIndex}`;
     await this.sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `A${rowIndex}`,
-      valueInputOption: 'USER_ENTERED',
+      range,
+      valueInputOption: 'RAW',
       resource: { values: [values] },
     });
   }
 
   async deleteRow(spreadsheetId, rowIndex) {
-    if (!spreadsheetId || !rowIndex) return;
     await this.ensureValidToken();
-    const { data } = await this.sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
-    const sheetId = data.sheets?.[0]?.properties?.sheetId || 0;
+    const sheetId = 0;
     await this.sheets.spreadsheets.batchUpdate({
       spreadsheetId,
       resource: {
-        requests: [{
-          deleteDimension: {
-            range: { sheetId, dimension: 'ROWS', startIndex: rowIndex - 1, endIndex: rowIndex },
+        requests: [
+          {
+            deleteDimension: {
+              range: {
+                sheetId,
+                dimension: 'ROWS',
+                startIndex: rowIndex - 1,
+                endIndex: rowIndex,
+              },
+            },
           },
-        }],
+        ],
       },
     });
   }
 
-  async getFolderIdFromLink(folderLink) {
-    const match = folderLink.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-    return match ? match[1] : null;
+  async getSheetValues(spreadsheetId) {
+    await this.ensureValidToken();
+    const { data } = await this.sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'A1:Z',
+    });
+    return data.values || [];
   }
 
-  async findOrCreateSubfolder(parentId, folderName) {
+  async getFolderIdFromLink(folderLink) {
+    await this.ensureValidToken();
+    const match = folderLink.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (!match) return null;
+    const folderId = match[1];
+    try {
+      await this.drive.files.get({ fileId: folderId, fields: 'id' });
+      return folderId;
+    } catch {
+      return null;
+    }
+  }
+
+  async findOrCreateSubfolder(parentFolderId, subfolderName) {
+    await this.ensureValidToken();
     const { data } = await this.drive.files.list({
-      q: `'${parentId}' in parents and name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-      fields: 'files(id,name)',
+      q: `'${parentFolderId}' in parents and name = '${subfolderName}' and mimeType = 'application/vnd.google-apps.folder'`,
+      fields: 'files(id, name)',
     });
-    if (data.files?.length > 0) return data.files[0].id;
-    const { data: created } = await this.drive.files.create({
-      resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
+
+    if (data.files && data.files.length > 0) {
+      return data.files[0].id;
+    }
+
+    const { data: newFolder } = await this.drive.files.create({
+      resource: {
+        name: subfolderName,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentFolderId],
+      },
       fields: 'id',
     });
-    return created.id;
+
+    return newFolder.id;
   }
 
   async listFilesInFolder(folderId) {
+    await this.ensureValidToken();
     const { data } = await this.drive.files.list({
-      q: `'${folderId}' in parents and trashed=false`,
+      q: `'${folderId}' in parents`,
       fields: 'files(id, name, mimeType)',
     });
     return data.files || [];
   }
 
-  async getSheetValues(spreadsheetId, range = 'A2:Z') {
-    await this.ensureValidToken();
-    const { data } = await this.sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range,
-    });
-    return data.values || [];
-  }
-
   async getExcelValues(fileId) {
-    try {
-      await this.ensureValidToken();
-      const response = await this.drive.files.get(
-        { fileId, alt: 'media' },
-        { responseType: 'arraybuffer' }
-      );
-
-      const buffer = Buffer.from(response.data);
-      const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-
-      const wsName = wb.SheetNames[0];
-      if (!wsName) return [];
-
-      const ws = wb.Sheets[wsName];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-
-      // Skip header row to match getSheetValues(A2:Z) behaviour
-      return rows.length > 0 ? rows.slice(1) : [];
-    } catch (err) {
-      console.error('Error parsing .xlsx from drive:', err);
-      return [];
-    }
+    await this.ensureValidToken();
+    const { data } = await this.drive.files.get({
+      fileId,
+      alt: 'media',
+    });
+    const workbook = XLSX.read(data, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    return XLSX.utils.sheet_to_json(worksheet, { header: 1 });
   }
 
   parseRowToModel(row, type) {
-    if (!row || row.length === 0) return null;
-    const headers = SPREADSHEET_HEADERS[type];
-    if (!headers) return null;
-
     const data = {};
+    const headers = SPREADSHEET_HEADERS[type] || [];
     const map = {
       products: {
-        'Product ID': 'productId', 'Name': 'name', 'Category': 'category', 'Subcategory': 'subcategory',
-        'Collection': 'collection', 'Season': 'season', 'Fabric': 'fabric', 'Cost Price': 'costPrice',
-        'Price': 'price', 'Sale Price': 'salePrice', 'Currency': 'currency', 'SKU': 'sku',
-        'Stock Qty': 'stockQty', 'Status': 'status', 'Tags': 'tags', 'Image Path': 'imageLink', 'Supplier ID': 'supplierId'
+        'Product ID': 'productId', 'Name': 'name', 'Category': 'category',
+        'Subcategory': 'subcategory', 'Collection': 'collection', 'Season': 'season',
+        'Fabric': 'fabric', 'Cost Price': 'costPrice', 'Price': 'price',
+        'Sale Price': 'salePrice', 'Currency': 'currency', 'SKU': 'sku',
+        'Stock Qty': 'stockQty', 'Status': 'status', 'Tags': 'tags',
+        'Image Path': 'imageLink', 'Supplier ID': 'supplierId', 'Created At': 'createdAt'
       },
       orders: {
         'Order ID': 'orderId', 'Customer ID': 'customerId', 'Customer Name': 'customerName',
         'Customer Phone': 'customerPhone', 'Subtotal': 'subtotal', 'Discount': 'discountAmount',
-        'Shipping': 'shippingCost', 'Tax': 'taxAmount', 'Total': 'total', 'Currency': 'currency',
-        'Status': 'status', 'Channel': 'channel', 'Priority': 'priority', 'Shipping Method': 'shippingMethod',
-        'Courier': 'courierName', 'Tracking #': 'trackingNumber', 'Shipping Address': 'shippingAddress',
+        'Shipping': 'shippingCost', 'Tax': 'taxAmount', 'Total': 'total',
+        'Currency': 'currency', 'Status': 'status', 'Channel': 'channel',
+        'Priority': 'priority', 'Shipping Method': 'shippingMethod', 'Courier': 'courier',
+        'Tracking #': 'trackingNumber', 'Shipping Address': 'shippingAddress',
         'Est. Delivery': 'estimatedDelivery', 'Notes': 'notes', 'Order Date': 'orderDate'
       },
       customers: {
-        'Customer ID': 'customerId', 'Full Name': 'fullName', 'Email': 'email', 'Phone': 'phone',
-        'WhatsApp': 'whatsapp', 'City': 'city', 'Country': 'country', 'Address': 'address',
-        'Gender': 'gender', 'Segment': 'segment', 'Source': 'source', 'Total Spent': 'totalSpent',
-        'Total Orders': 'totalOrders', 'Loyalty Points': 'loyaltyPoints', 'Date Joined': 'dateJoined',
-        'Subscribed': 'isSubscribed', 'Tags': 'tags', 'Notes': 'notes'
+        'Customer ID': 'customerId', 'Full Name': 'name', 'Email': 'email',
+        'Phone': 'phone', 'WhatsApp': 'whatsapp', 'City': 'city',
+        'Country': 'country', 'Address': 'address', 'Gender': 'gender',
+        'Segment': 'segment', 'Source': 'source', 'Total Spent': 'totalSpent',
+        'Total Orders': 'totalOrders', 'Loyalty Points': 'loyaltyPoints',
+        'Date Joined': 'dateJoined', 'Subscribed': 'subscribed', 'Tags': 'tags', 'Notes': 'notes'
       },
       financial: {
         'Transaction ID': 'transactionId', 'Order ID': 'orderId', 'Customer ID': 'customerId',
-        'Customer Name': 'customerName', 'Order Status': 'orderStatus', 'Order Total': 'orderTotal', 'Amount': 'price',
-        'Payment Method': 'paymentMethod', 'Payment Status': 'paymentStatus', 'Transaction Date': 'transactionDate'
+        'Customer Name': 'customerName', 'Order Status': 'orderStatus', 'Order Total': 'orderTotal',
+        'Amount': 'amount', 'Payment Method': 'paymentMethod', 'Payment Status': 'paymentStatus',
+        'Transaction Date': 'transactionDate'
       },
       suppliers: {
         'Supplier ID': 'supplierId', 'Name': 'name', 'Contact Person': 'contactPerson',
@@ -291,10 +297,47 @@ class GoogleSheetsService {
 
     return data;
   }
+
+  async uploadFileToDrive(folderId, fileName, mimeType, buffer) {
+    await this.ensureValidToken();
+    
+    const fileMetadata = {
+      name: fileName,
+      parents: [folderId],
+    };
+
+    // Convert Buffer to a readable stream
+    const { Readable } = require('stream');
+    const bufferStream = new Readable();
+    bufferStream.push(buffer);
+    bufferStream.push(null);
+
+    const media = {
+      mimeType: mimeType,
+      body: bufferStream,
+    };
+
+    try {
+      const { data } = await this.drive.files.create({
+        resource: fileMetadata,
+        media: media,
+        fields: 'id, webViewLink, webContentLink',
+      });
+      
+      return {
+        id: data.id,
+        webViewLink: data.webViewLink,
+        webContentLink: data.webContentLink,
+      };
+    } catch (err) {
+      console.error('Drive file upload error:', err.message);
+      throw new Error(`Failed to upload file to Drive: ${err.message}`);
+    }
+  }
 }
 
 function syncAsync(fn) {
   fn().catch(err => console.error('Background sheets sync error:', err.message));
 }
 
-module.exports = { GoogleSheetsService, syncAsync, SPREADSHEET_HEADERS };
+module.exports = { GoogleSheetsService, syncAsync };
